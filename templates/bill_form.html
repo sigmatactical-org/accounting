@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}{% if bill.is_some() %}Edit bill{% else %}New bill{% endif %} — Sigma Accounting{% endblock %}
+
+{% block brand %}Sigma Accounting{% endblock %}
+
+{% block main_class %}accounting-main{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <h1>{% if bill.is_some() %}Edit bill{% else %}Add bill{% endif %}</h1>
+  <p class="text-secondary">Digital bills are entered directly. Scanned bills reference a scan URI (file path or URL).</p>
+
+  {% if let Some(err) = error %}
+  <div class="alert alert-danger" role="alert">{{ err }}</div>
+  {% endif %}
+
+  <form method="post" action="{% if let Some(b) = bill.as_ref() %}/bills/{{ b.id }}/edit{% else %}/bills{% endif %}" class="col-lg-8">
+    <div class="mb-3">
+      <span class="form-label d-block">Kind</span>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="kind" id="kind_digital" value="digital" {% if kind_digital %}checked{% endif %}>
+        <label class="form-check-label" for="kind_digital">Digital</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="kind" id="kind_scanned" value="scanned" {% if kind_scanned %}checked{% endif %}>
+        <label class="form-check-label" for="kind_scanned">Scanned</label>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label for="status" class="form-label">Status</label>
+      <select class="form-select" id="status" name="status">
+        <option value="draft" {% if status_draft %}selected{% endif %}>Draft</option>
+        <option value="approved" {% if status_approved %}selected{% endif %}>Approved</option>
+        <option value="paid" {% if status_paid %}selected{% endif %}>Paid</option>
+        <option value="void" {% if status_void %}selected{% endif %}>Void</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label for="vendor" class="form-label">Vendor</label>
+      <input type="text" class="form-control" id="vendor" name="vendor" value="{{ vendor }}" required>
+    </div>
+    <div class="mb-3">
+      <label for="invoice_number" class="form-label">Invoice number</label>
+      <input type="text" class="form-control" id="invoice_number" name="invoice_number" value="{{ invoice_number }}">
+    </div>
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label for="bill_date" class="form-label">Bill date</label>
+        <input type="date" class="form-control" id="bill_date" name="bill_date" value="{{ bill_date }}" required>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label for="due_date" class="form-label">Due date</label>
+        <input type="date" class="form-control" id="due_date" name="due_date" value="{{ due_date }}">
+      </div>
+    </div>
+    <div class="mb-3">
+      <label for="currency" class="form-label">Currency</label>
+      <input type="text" class="form-control" id="currency" name="currency" value="{{ currency }}" maxlength="3">
+    </div>
+    <div class="mb-3">
+      <label for="scan_uri" class="form-label">Scan URI</label>
+      <input type="text" class="form-control" id="scan_uri" name="scan_uri" value="{{ scan_uri }}" placeholder="Required for scanned bills">
+      <div class="form-text">Path or URL to the scanned document (required when kind is scanned).</div>
+    </div>
+    <div class="mb-3">
+      <label for="line_items" class="form-label">Line items</label>
+      <textarea class="form-control font-monospace" id="line_items" name="line_items" rows="8" placeholder="# sku_id description qty unit_cents&#10;- Shipping 1 500">{{ line_items }}</textarea>
+      <div class="form-text">
+        One line per item: <code>&lt;sku_id|-&gt; description quantity unit_price_cents</code>.
+        Use <code>-</code> when no catalog SKU applies. Lines starting with <code>#</code> are ignored.
+      </div>
+      {% if !catalog_skus.is_empty() %}
+      <details class="mt-2">
+        <summary class="text-secondary small">Catalog SKUs for reference</summary>
+        <ul class="small text-secondary mb-0 mt-2">
+          {% for sku in catalog_skus %}
+          <li><code>{{ sku.id }}</code> — {{ sku.sku_code }} ({{ sku.name }})</li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label for="notes" class="form-label">Notes</label>
+      <textarea class="form-control" id="notes" name="notes" rows="2">{{ notes }}</textarea>
+    </div>
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a class="btn btn-outline-secondary" href="/">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

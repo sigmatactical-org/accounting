@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Sigma Accounting{% endblock %}
+
+{% block brand %}Sigma Accounting{% endblock %}
+
+{% block main_class %}accounting-main{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h1 class="mb-1">Accounting</h1>
+      <p class="text-secondary mb-0">Scanned and digital bills, integrations, and catalog-linked line items.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="/integrations/new">Add integration</a>
+      <a class="btn btn-primary" href="/bills/new">Add bill</a>
+    </div>
+  </div>
+
+  {% if let Some(msg) = message %}
+  <div class="alert alert-info" role="status">{{ msg }}</div>
+  {% endif %}
+
+  {% if let Some(notice) = catalog_notice %}
+  <div class="alert alert-warning" role="status">{{ notice }}</div>
+  {% endif %}
+
+  <section class="mb-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h4 mb-0">Bills</h2>
+    </div>
+
+    {% if bills.is_empty() %}
+    <p class="text-secondary">No bills yet. Add a digital bill or upload a scanned bill reference.</p>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Invoice</th>
+            <th>Kind</th>
+            <th>Status</th>
+            <th>Date</th>
+            <th>Total</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in bills %}
+          <tr>
+            <td>{{ row.bill.vendor }}</td>
+            <td>{% if let Some(inv) = row.bill.invoice_number.as_ref() %}<code>{{ inv }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td>{{ row.kind_label }}</td>
+            <td>{{ row.status_label }}</td>
+            <td>{{ row.bill.bill_date }}</td>
+            <td>{{ row.total_display }}</td>
+            <td class="text-secondary"><small>{{ row.bill.updated_at }}</small></td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="/bills/{{ row.bill.id }}/edit">Edit</a>
+              <form method="post" action="/bills/{{ row.bill.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this bill?');">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="mb-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h4 mb-0">Integrations</h2>
+    </div>
+
+    {% if integrations.is_empty() %}
+    <p class="text-secondary">No integrations configured. Connect QuickBooks, Xero, or a custom provider.</p>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Provider</th>
+            <th>Enabled</th>
+            <th>External account</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in integrations %}
+          <tr>
+            <td>{{ row.integration.name }}</td>
+            <td>{{ row.provider_label }}</td>
+            <td>{% if row.integration.enabled %}<span class="text-success">Yes</span>{% else %}<span class="text-secondary">No</span>{% endif %}</td>
+            <td>{% if let Some(id) = row.integration.external_account_id.as_ref() %}<code>{{ id }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td class="text-secondary"><small>{{ row.integration.updated_at }}</small></td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="/integrations/{{ row.integration.id }}/edit">Edit</a>
+              <form method="post" action="/integrations/{{ row.integration.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this integration?');">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if catalog_configured %}
+  <section class="mb-5">
+    <h2 class="h5">Catalog products</h2>
+    {% if catalog_skus.is_empty() %}
+    <p class="text-secondary small mb-0">No catalog SKUs returned. Check <code>ACCOUNTING_CATALOG_BASE_URL</code>.</p>
+    {% else %}
+    <ul class="small text-secondary mb-0">
+      {% for sku in catalog_skus %}
+      <li><code>{{ sku.id }}</code> — {{ sku.sku_code }} ({{ sku.name }})</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% else %}
+  <p class="small text-secondary">Set <code>ACCOUNTING_CATALOG_BASE_URL</code> to link bill line items to catalog SKUs.</p>
+  {% endif %}
+
+  <section class="mt-5">
+    <h2 class="h5">JSON API</h2>
+    <ul class="small text-secondary">
+      <li><code>GET /bills</code>, <code>POST /bills</code>, <code>GET /bills/{id}</code>, <code>PUT /bills/{id}</code>, <code>DELETE /bills/{id}</code></li>
+      <li><code>GET /integrations</code>, <code>POST /integrations</code>, <code>GET /integrations/{id}</code>, <code>PUT /integrations/{id}</code>, <code>DELETE /integrations/{id}</code></li>
+      <li><code>GET /catalog/skus</code> — proxy to sigma-catalog (requires <code>ACCOUNTING_CATALOG_BASE_URL</code>)</li>
+    </ul>
+  </section>
+</div>
+{% endblock %}
