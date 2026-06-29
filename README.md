@@ -116,9 +116,14 @@ cargo run -p sigma-accounting
 
 Open http://localhost:8080
 
-With catalog integration:
+With catalog integration (run catalog on another port when accounting uses 8080):
 
 ```bash
+# Terminal 1 — catalog
+(cd commerce/catalog && ./scripts/prepare-local.sh && PORT=8081 cargo run -p sigma-catalog)
+
+# Terminal 2 — accounting
+./scripts/prepare-local.sh
 ACCOUNTING_CATALOG_BASE_URL=http://127.0.0.1:8081/ cargo run -p sigma-accounting
 ```
 
