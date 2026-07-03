@@ -19,6 +19,7 @@ if [[ -n "$THEME_HELPER" ]]; then
   source "$THEME_HELPER"
   prepare_sigma_theme "$ROOT"
   write_theme_patch_files "$ROOT"
+  write_sigma_pg_patch "$ROOT"
   write_askama_config "$ROOT"
   build_theme_ts "$ROOT"
 else

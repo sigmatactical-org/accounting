@@ -7,9 +7,7 @@ fn main() -> Result<(), BoxError> {
         .enable_all()
         .build()?
         .block_on(async move {
-            let store = sigma_accounting::store::AccountingStore::load(
-                sigma_accounting::config::data_path(),
-            )?;
+            let store = sigma_accounting::store::AccountingStore::connect().await?;
             let listener = tokio::net::TcpListener::bind(addr).await?;
             println!("Sigma Accounting listening on http://{addr}");
             warp::serve(sigma_accounting::routes(store))

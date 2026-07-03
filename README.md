@@ -19,7 +19,7 @@ Shared site chrome comes from [sigma-theme](https://github.com/sigmatactical-org
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | Listen port (default `8080`) |
-| `ACCOUNTING_DATA_PATH` | JSON database path (default `data/accounting.json`) |
+| `DATABASE_URL` | PostgreSQL connection URL (default `postgres://sigma:sigma@127.0.0.1:5432/sigma`) |
 | `ACCOUNTING_CATALOG_BASE_URL` | Base URL of sigma-catalog (e.g. `http://127.0.0.1:8081/`) |
 
 ## Data model
@@ -136,7 +136,12 @@ Release is in **`.github/workflows/release.yml`** when configured. Locally:
 docker build -f Dockerfile build/image
 ```
 
-Mount a volume at `/app/data` (or set `ACCOUNTING_DATA_PATH`) so accounting data persists across restarts.
+Data is stored in the shared PostgreSQL `accounting` schema (`accounting.snapshot` JSONB table). Start Postgres from [sigma-pg](https://github.com/sigmatactical-org/sigma-pg):
+
+```bash
+git clone https://github.com/sigmatactical-org/sigma-pg
+cd sigma-pg && docker compose -f docker-compose.deps.yml up -d
+```
 
 ## License
 

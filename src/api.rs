@@ -34,7 +34,8 @@ fn store_error_status(err: &StoreError) -> StatusCode {
         | StoreError::InvalidQuantity
         | StoreError::IntegrationNameRequired => StatusCode::BAD_REQUEST,
         StoreError::DuplicateIntegrationName => StatusCode::CONFLICT,
-        StoreError::Io(_) | StoreError::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        StoreError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        StoreError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -111,7 +112,7 @@ fn create_bill(
         .and(store)
         .and_then(|input: CreateBill, store: SharedStore| async move {
             let mut store = store.lock().await;
-            let response = match store.create_bill(input) {
+            let response = match store.create_bill(input).await {
                 Ok(bill) => warp::reply::with_status(warp::reply::json(&bill), StatusCode::CREATED)
                     .into_response(),
                 Err(e) => json_error(store_error_status(&e), e.to_string()),
@@ -131,7 +132,7 @@ fn update_bill(
         .and_then(
             |id: String, input: UpdateBill, store: SharedStore| async move {
                 let mut store = store.lock().await;
-                let response = match store.update_bill(&id, input) {
+                let response = match store.update_bill(&id, input).await {
                     Ok(bill) => warp::reply::json(&bill).into_response(),
                     Err(StoreError::BillNotFound) => return Err(warp::reject::not_found()),
                     Err(e) => json_error(store_error_status(&e), e.to_string()),
@@ -150,7 +151,7 @@ fn delete_bill(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let mut store = store.lock().await;
-            let response = match store.delete_bill(&id) {
+            let response = match store.delete_bill(&id).await {
                 Ok(()) => {
                     warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT).into_response()
                 }
@@ -200,7 +201,7 @@ fn create_integration(
         .and(store)
         .and_then(|input: CreateIntegration, store: SharedStore| async move {
             let mut store = store.lock().await;
-            let response = match store.create_integration(input) {
+            let response = match store.create_integration(input).await {
                 Ok(integration) => {
                     warp::reply::with_status(warp::reply::json(&integration), StatusCode::CREATED)
                         .into_response()
@@ -222,7 +223,7 @@ fn update_integration(
         .and_then(
             |id: String, input: UpdateIntegration, store: SharedStore| async move {
                 let mut store = store.lock().await;
-                let response = match store.update_integration(&id, input) {
+                let response = match store.update_integration(&id, input).await {
                     Ok(integration) => warp::reply::json(&integration).into_response(),
                     Err(StoreError::IntegrationNotFound) => return Err(warp::reject::not_found()),
                     Err(e) => json_error(store_error_status(&e), e.to_string()),
@@ -241,7 +242,7 @@ fn delete_integration(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let mut store = store.lock().await;
-            let response = match store.delete_integration(&id) {
+            let response = match store.delete_integration(&id).await {
                 Ok(()) => {
                     warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT).into_response()
                 }

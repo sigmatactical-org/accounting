@@ -1,11 +1,12 @@
-use std::path::{Path, PathBuf};
-
+use sqlx::PgPool;
 use thiserror::Error;
 
 use crate::model::{
     Bill, BillKind, CreateBill, CreateIntegration, Integration, UpdateBill, UpdateIntegration,
     compute_total_cents,
 };
+
+const SCHEMA: &str = "accounting";
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -27,10 +28,10 @@ pub enum StoreError {
     IntegrationNameRequired,
     #[error("integration name already exists")]
     DuplicateIntegrationName,
+    #[error("database error: {0}")]
+    Database(#[from] anyhow::Error),
     #[error("{0}")]
-    Io(#[from] std::io::Error),
-    #[error("{0}")]
-    Json(#[from] serde_json::Error),
+    InvalidInput(String),
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -41,32 +42,29 @@ struct Database {
 
 #[derive(Debug, Clone)]
 pub struct AccountingStore {
-    path: PathBuf,
+    pool: PgPool,
     db: Database,
 }
 
 impl AccountingStore {
-    /// Load or initialize the accounting database at `path`.
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let path = path.as_ref().to_path_buf();
-        let db = if path.exists() {
-            let bytes = std::fs::read(&path)?;
-            serde_json::from_slice(&bytes)?
-        } else {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            Database::default()
-        };
-        Ok(Self { path, db })
+    /// Connect to PostgreSQL and load the accounting snapshot.
+    pub async fn connect() -> Result<Self, StoreError> {
+        let pool = sigma_pg::connect().await?;
+        let db: Database = sigma_pg::load_snapshot(&pool, SCHEMA).await?;
+        Ok(Self { pool, db })
     }
 
-    fn save(&self) -> Result<(), StoreError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec_pretty(&self.db)?;
-        std::fs::write(&self.path, bytes)?;
+    /// Reset the accounting snapshot (tests only).
+    #[cfg(test)]
+    pub async fn connect_empty() -> Result<Self, StoreError> {
+        let pool = sigma_pg::connect().await?;
+        let db = Database::default();
+        sigma_pg::save_snapshot(&pool, SCHEMA, &db).await?;
+        Ok(Self { pool, db })
+    }
+
+    async fn persist(&self) -> Result<(), StoreError> {
+        sigma_pg::save_snapshot(&self.pool, SCHEMA, &self.db).await?;
         Ok(())
     }
 
@@ -82,7 +80,7 @@ impl AccountingStore {
         self.db.bills.iter().find(|b| b.id == id).cloned()
     }
 
-    pub fn create_bill(&mut self, input: CreateBill) -> Result<Bill, StoreError> {
+    pub async fn create_bill(&mut self, input: CreateBill) -> Result<Bill, StoreError> {
         self.validate_bill_input(
             input.kind,
             &input.vendor,
@@ -92,11 +90,11 @@ impl AccountingStore {
         )?;
         let bill = Bill::new(input);
         self.db.bills.push(bill.clone());
-        self.save()?;
+        self.persist().await?;
         Ok(bill)
     }
 
-    pub fn update_bill(&mut self, id: &str, input: UpdateBill) -> Result<Bill, StoreError> {
+    pub async fn update_bill(&mut self, id: &str, input: UpdateBill) -> Result<Bill, StoreError> {
         if self.get_bill(id).is_none() {
             return Err(StoreError::BillNotFound);
         }
@@ -115,11 +113,11 @@ impl AccountingStore {
             .ok_or(StoreError::BillNotFound)?;
         bill.apply_update(input);
         let updated = bill.clone();
-        self.save()?;
+        self.persist().await?;
         Ok(updated)
     }
 
-    pub fn delete_bill(&mut self, id: &str) -> Result<(), StoreError> {
+    pub async fn delete_bill(&mut self, id: &str) -> Result<(), StoreError> {
         let index = self
             .db
             .bills
@@ -127,7 +125,7 @@ impl AccountingStore {
             .position(|b| b.id == id)
             .ok_or(StoreError::BillNotFound)?;
         self.db.bills.remove(index);
-        self.save()
+        self.persist().await
     }
 
     #[must_use]
@@ -142,18 +140,18 @@ impl AccountingStore {
         self.db.integrations.iter().find(|i| i.id == id).cloned()
     }
 
-    pub fn create_integration(
+    pub async fn create_integration(
         &mut self,
         input: CreateIntegration,
     ) -> Result<Integration, StoreError> {
         self.validate_integration_name(&input.name, None)?;
         let integration = Integration::new(input);
         self.db.integrations.push(integration.clone());
-        self.save()?;
+        self.persist().await?;
         Ok(integration)
     }
 
-    pub fn update_integration(
+    pub async fn update_integration(
         &mut self,
         id: &str,
         input: UpdateIntegration,
@@ -170,11 +168,11 @@ impl AccountingStore {
             .ok_or(StoreError::IntegrationNotFound)?;
         integration.apply_update(input);
         let updated = integration.clone();
-        self.save()?;
+        self.persist().await?;
         Ok(updated)
     }
 
-    pub fn delete_integration(&mut self, id: &str) -> Result<(), StoreError> {
+    pub async fn delete_integration(&mut self, id: &str) -> Result<(), StoreError> {
         let index = self
             .db
             .integrations
@@ -182,7 +180,7 @@ impl AccountingStore {
             .position(|i| i.id == id)
             .ok_or(StoreError::IntegrationNotFound)?;
         self.db.integrations.remove(index);
-        self.save()
+        self.persist().await
     }
 
     fn validate_bill_input(
@@ -240,12 +238,11 @@ impl AccountingStore {
 mod tests {
     use super::*;
     use crate::model::{BillKind, BillLineItem, BillStatus, IntegrationProvider};
-    use tempfile::TempDir;
 
-    fn test_store() -> (AccountingStore, TempDir) {
-        let dir = TempDir::new().unwrap();
-        let store = AccountingStore::load(dir.path().join("accounting.json")).unwrap();
-        (store, dir)
+    async fn test_store() -> AccountingStore {
+        AccountingStore::connect_empty()
+            .await
+            .expect("PostgreSQL required for tests")
     }
 
     fn sample_line_items() -> Vec<BillLineItem> {
@@ -257,9 +254,9 @@ mod tests {
         }]
     }
 
-    #[test]
-    fn create_digital_bill() {
-        let (mut store, _dir) = test_store();
+    #[tokio::test]
+    async fn create_digital_bill() {
+        let mut store = test_store().await;
         let bill = store
             .create_bill(CreateBill {
                 kind: BillKind::Digital,
@@ -273,15 +270,16 @@ mod tests {
                 scan_uri: None,
                 notes: None,
             })
+            .await
             .unwrap();
         assert_eq!(bill.vendor, "Acme Corp");
         assert_eq!(bill.kind, BillKind::Digital);
         assert_eq!(bill.total_cents, 2500);
     }
 
-    #[test]
-    fn scanned_bill_requires_scan_uri() {
-        let (mut store, _dir) = test_store();
+    #[tokio::test]
+    async fn scanned_bill_requires_scan_uri() {
+        let mut store = test_store().await;
         let err = store
             .create_bill(CreateBill {
                 kind: BillKind::Scanned,
@@ -295,13 +293,14 @@ mod tests {
                 scan_uri: None,
                 notes: None,
             })
+            .await
             .unwrap_err();
         assert!(matches!(err, StoreError::ScanUriRequired));
     }
 
-    #[test]
-    fn create_integration() {
-        let (mut store, _dir) = test_store();
+    #[tokio::test]
+    async fn create_integration() {
+        let mut store = test_store().await;
         let integration = store
             .create_integration(CreateIntegration {
                 name: "QuickBooks Production".to_string(),
@@ -311,6 +310,7 @@ mod tests {
                 webhook_url: None,
                 notes: None,
             })
+            .await
             .unwrap();
         assert_eq!(integration.name, "QuickBooks Production");
         assert!(integration.enabled);

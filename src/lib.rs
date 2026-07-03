@@ -70,12 +70,12 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use warp::http::StatusCode;
 
-    fn test_store() -> store::AccountingStore {
-        let dir = TempDir::new().unwrap();
-        store::AccountingStore::load(dir.path().join("accounting.json")).unwrap()
+    async fn test_store() -> store::AccountingStore {
+        store::AccountingStore::connect_empty()
+            .await
+            .expect("PostgreSQL required for tests")
     }
 
     #[tokio::test]
@@ -83,7 +83,7 @@ mod tests {
         let res = warp::test::request()
             .method("GET")
             .path("/up")
-            .reply(&routes(test_store()))
+            .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::OK);
     }
@@ -93,7 +93,7 @@ mod tests {
         let res = warp::test::request()
             .method("GET")
             .path("/")
-            .reply(&routes(test_store()))
+            .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = std::str::from_utf8(res.body()).unwrap();
@@ -106,7 +106,7 @@ mod tests {
             .method("GET")
             .path("/bills")
             .header("accept", "application/json")
-            .reply(&routes(test_store()))
+            .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::OK);
         let body: Vec<Bill> = serde_json::from_slice(res.body()).unwrap();
@@ -122,7 +122,7 @@ mod tests {
             .body(
                 r#"{"kind":"digital","vendor":"Acme Corp","invoice_number":"INV-1","bill_date":"2026-01-15","line_items":[{"description":"Supplies","quantity":1,"unit_price_cents":2500}]}"#,
             )
-            .reply(&routes(test_store()))
+            .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::CREATED);
         let bill: Bill = serde_json::from_slice(res.body()).unwrap();
@@ -138,7 +138,7 @@ mod tests {
             .path("/integrations")
             .header("content-type", "application/json")
             .body(r#"{"name":"QuickBooks","provider":"quickbooks","enabled":true}"#)
-            .reply(&routes(test_store()))
+            .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::CREATED);
         let integration: Integration = serde_json::from_slice(res.body()).unwrap();
@@ -151,7 +151,7 @@ mod tests {
         let res = warp::test::request()
             .method("GET")
             .path("/catalog/skus")
-            .reply(&routes(test_store()))
+            .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
     }

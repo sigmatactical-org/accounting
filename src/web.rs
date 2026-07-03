@@ -83,7 +83,7 @@ fn create_bill_form(
             let values = bill_form_to_values(&form);
             let (catalog_skus, _) = fetch_catalog_skus().await;
             let response = match form.into_create() {
-                Ok(input) => match store.create_bill(input) {
+                Ok(input) => match store.create_bill(input).await {
                     Ok(_) => {
                         warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response()
                     }
@@ -126,7 +126,7 @@ fn update_bill_form(
                 let values = bill_form_to_values(&form);
                 let (catalog_skus, _) = fetch_catalog_skus().await;
                 let response = match form.into_update() {
-                    Ok(input) => match store.update_bill(&id, input) {
+                    Ok(input) => match store.update_bill(&id, input).await {
                         Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
                             .into_response(),
                         Err(e) => {
@@ -152,7 +152,7 @@ fn delete_bill_form(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let mut store = store.lock().await;
-            match store.delete_bill(&id) {
+            match store.delete_bill(&id).await {
                 Ok(()) => {
                     Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())
                 }
@@ -200,7 +200,7 @@ fn create_integration_form(
             let mut store = store.lock().await;
             let values = integration_form_to_values(&form);
             let response = match form.into_create() {
-                Ok(input) => match store.create_integration(input) {
+                Ok(input) => match store.create_integration(input).await {
                     Ok(_) => {
                         warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response()
                     }
@@ -241,7 +241,7 @@ fn update_integration_form(
                 let mut store = store.lock().await;
                 let values = integration_form_to_values(&form);
                 let response = match form.into_update() {
-                    Ok(input) => match store.update_integration(&id, input) {
+                    Ok(input) => match store.update_integration(&id, input).await {
                         Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
                             .into_response(),
                         Err(e) => {
@@ -267,7 +267,7 @@ fn delete_integration_form(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let mut store = store.lock().await;
-            match store.delete_integration(&id) {
+            match store.delete_integration(&id).await {
                 Ok(()) => {
                     Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())
                 }
@@ -315,10 +315,7 @@ fn integration_form_to_values(form: &IntegrationForm) -> IntegrationFormValues {
 }
 
 fn invalid_input(message: String) -> StoreError {
-    StoreError::Io(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        message,
-    ))
+    StoreError::InvalidInput(message)
 }
 
 fn render_bill_form_error(
