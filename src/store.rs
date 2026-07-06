@@ -1,12 +1,13 @@
-use sqlx::PgPool;
+use std::collections::HashMap;
+
+use chrono::{DateTime, NaiveDate, Utc};
+use sqlx::{PgPool, Row};
 use thiserror::Error;
 
 use crate::model::{
-    Bill, BillKind, CreateBill, CreateIntegration, Integration, UpdateBill, UpdateIntegration,
-    compute_total_cents,
+    Bill, BillKind, BillLineItem, CreateBill, CreateIntegration, Integration, UpdateBill,
+    UpdateIntegration, compute_total_cents,
 };
-
-const SCHEMA: &str = "accounting";
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -34,50 +35,61 @@ pub enum StoreError {
     InvalidInput(String),
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-struct Database {
-    bills: Vec<Bill>,
-    integrations: Vec<Integration>,
+impl From<sqlx::Error> for StoreError {
+    fn from(err: sqlx::Error) -> Self {
+        Self::Database(err.into())
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct AccountingStore {
     pool: PgPool,
-    db: Database,
 }
 
 impl AccountingStore {
-    /// Connect to PostgreSQL and load the accounting snapshot.
     pub async fn connect() -> Result<Self, StoreError> {
         let pool = sigma_pg::connect().await?;
-        let db: Database = sigma_pg::load_document(&pool, SCHEMA).await?;
-        Ok(Self { pool, db })
+        Ok(Self { pool })
     }
 
-    /// Reset the accounting snapshot (tests only).
     #[cfg(test)]
     pub async fn connect_empty() -> Result<Self, StoreError> {
-        let pool = sigma_pg::connect().await?;
-        let db = Database::default();
-        sigma_pg::save_document(&pool, SCHEMA, &db).await?;
-        Ok(Self { pool, db })
+        let store = Self::connect().await?;
+        sqlx::query(
+            "TRUNCATE accounting.bill_line_items, accounting.bills, accounting.integrations",
+        )
+        .execute(&store.pool)
+        .await?;
+        Ok(store)
     }
 
-    async fn persist(&self) -> Result<(), StoreError> {
-        sigma_pg::save_document(&self.pool, SCHEMA, &self.db).await?;
-        Ok(())
+    pub async fn list_bills(&self) -> Result<Vec<Bill>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT id, kind, status, vendor, invoice_number, bill_date, due_date, currency, \
+             total_cents, scan_uri, notes, updated_at \
+             FROM accounting.bills ORDER BY bill_date DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        self.rows_to_bills(rows).await
     }
 
-    #[must_use]
-    pub fn list_bills(&self) -> Vec<Bill> {
-        let mut bills = self.db.bills.clone();
-        bills.sort_by(|a, b| b.bill_date.cmp(&a.bill_date));
-        bills
-    }
-
-    #[must_use]
-    pub fn get_bill(&self, id: &str) -> Option<Bill> {
-        self.db.bills.iter().find(|b| b.id == id).cloned()
+    pub async fn get_bill(&self, id: &str) -> Result<Option<Bill>, StoreError> {
+        let row = sqlx::query(
+            "SELECT id, kind, status, vendor, invoice_number, bill_date, due_date, currency, \
+             total_cents, scan_uri, notes, updated_at \
+             FROM accounting.bills WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(row) => {
+                let bills = self.rows_to_bills(vec![row]).await?;
+                Ok(bills.into_iter().next())
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn create_bill(&mut self, input: CreateBill) -> Result<Bill, StoreError> {
@@ -89,13 +101,15 @@ impl AccountingStore {
             input.scan_uri.as_deref(),
         )?;
         let bill = Bill::new(input);
-        self.db.bills.push(bill.clone());
-        self.persist().await?;
+        let mut tx = self.pool.begin().await?;
+        insert_bill(&mut tx, &bill).await?;
+        replace_line_items(&mut tx, &bill.id, &bill.line_items).await?;
+        tx.commit().await?;
         Ok(bill)
     }
 
     pub async fn update_bill(&mut self, id: &str, input: UpdateBill) -> Result<Bill, StoreError> {
-        if self.get_bill(id).is_none() {
+        if self.get_bill(id).await?.is_none() {
             return Err(StoreError::BillNotFound);
         }
         self.validate_bill_input(
@@ -105,49 +119,86 @@ impl AccountingStore {
             &input.line_items,
             input.scan_uri.as_deref(),
         )?;
-        let bill = self
-            .db
-            .bills
-            .iter_mut()
-            .find(|b| b.id == id)
-            .ok_or(StoreError::BillNotFound)?;
+        let mut bill = self.get_bill(id).await?.ok_or(StoreError::BillNotFound)?;
         bill.apply_update(input);
-        let updated = bill.clone();
-        self.persist().await?;
-        Ok(updated)
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE accounting.bills SET kind = $2, status = $3, vendor = $4, invoice_number = $5, \
+             bill_date = $6, due_date = $7, currency = $8, total_cents = $9, scan_uri = $10, \
+             notes = $11, updated_at = $12 WHERE id = $1",
+        )
+        .bind(&bill.id)
+        .bind(kind_str(bill.kind))
+        .bind(bill_status_str(bill.status))
+        .bind(&bill.vendor)
+        .bind(&bill.invoice_number)
+        .bind(parse_date(&bill.bill_date)?)
+        .bind(bill.due_date.as_deref().map(parse_date).transpose()?)
+        .bind(&bill.currency)
+        .bind(bill.total_cents)
+        .bind(&bill.scan_uri)
+        .bind(&bill.notes)
+        .bind(parse_ts(&bill.updated_at)?)
+        .execute(&mut *tx)
+        .await?;
+        replace_line_items(&mut tx, &bill.id, &bill.line_items).await?;
+        tx.commit().await?;
+        Ok(bill)
     }
 
     pub async fn delete_bill(&mut self, id: &str) -> Result<(), StoreError> {
-        let index = self
-            .db
-            .bills
-            .iter()
-            .position(|b| b.id == id)
-            .ok_or(StoreError::BillNotFound)?;
-        self.db.bills.remove(index);
-        self.persist().await
+        let result = sqlx::query("DELETE FROM accounting.bills WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(StoreError::BillNotFound);
+        }
+        Ok(())
     }
 
-    #[must_use]
-    pub fn list_integrations(&self) -> Vec<Integration> {
-        let mut integrations = self.db.integrations.clone();
-        integrations.sort_by_key(|i| i.name.to_lowercase());
-        integrations
+    pub async fn list_integrations(&self) -> Result<Vec<Integration>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT id, name, provider, enabled, external_account_id, webhook_url, notes, \
+             updated_at FROM accounting.integrations ORDER BY lower(name)",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(row_to_integration).collect()
     }
 
-    #[must_use]
-    pub fn get_integration(&self, id: &str) -> Option<Integration> {
-        self.db.integrations.iter().find(|i| i.id == id).cloned()
+    pub async fn get_integration(&self, id: &str) -> Result<Option<Integration>, StoreError> {
+        let row = sqlx::query(
+            "SELECT id, name, provider, enabled, external_account_id, webhook_url, notes, \
+             updated_at FROM accounting.integrations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(row_to_integration).transpose()
     }
 
     pub async fn create_integration(
         &mut self,
         input: CreateIntegration,
     ) -> Result<Integration, StoreError> {
-        self.validate_integration_name(&input.name, None)?;
+        self.validate_integration_name(&input.name, None).await?;
         let integration = Integration::new(input);
-        self.db.integrations.push(integration.clone());
-        self.persist().await?;
+        sqlx::query(
+            "INSERT INTO accounting.integrations \
+             (id, name, provider, enabled, external_account_id, webhook_url, notes, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(&integration.id)
+        .bind(&integration.name)
+        .bind(provider_str(integration.provider))
+        .bind(integration.enabled)
+        .bind(&integration.external_account_id)
+        .bind(&integration.webhook_url)
+        .bind(&integration.notes)
+        .bind(parse_ts(&integration.updated_at)?)
+        .execute(&self.pool)
+        .await?;
         Ok(integration)
     }
 
@@ -156,31 +207,73 @@ impl AccountingStore {
         id: &str,
         input: UpdateIntegration,
     ) -> Result<Integration, StoreError> {
-        if self.get_integration(id).is_none() {
+        if self.get_integration(id).await?.is_none() {
             return Err(StoreError::IntegrationNotFound);
         }
-        self.validate_integration_name(&input.name, Some(id))?;
-        let integration = self
-            .db
-            .integrations
-            .iter_mut()
-            .find(|i| i.id == id)
+        self.validate_integration_name(&input.name, Some(id)).await?;
+        let mut integration = self
+            .get_integration(id)
+            .await?
             .ok_or(StoreError::IntegrationNotFound)?;
         integration.apply_update(input);
-        let updated = integration.clone();
-        self.persist().await?;
-        Ok(updated)
+        sqlx::query(
+            "UPDATE accounting.integrations SET name = $2, provider = $3, enabled = $4, \
+             external_account_id = $5, webhook_url = $6, notes = $7, updated_at = $8 \
+             WHERE id = $1",
+        )
+        .bind(&integration.id)
+        .bind(&integration.name)
+        .bind(provider_str(integration.provider))
+        .bind(integration.enabled)
+        .bind(&integration.external_account_id)
+        .bind(&integration.webhook_url)
+        .bind(&integration.notes)
+        .bind(parse_ts(&integration.updated_at)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(integration)
     }
 
     pub async fn delete_integration(&mut self, id: &str) -> Result<(), StoreError> {
-        let index = self
-            .db
-            .integrations
-            .iter()
-            .position(|i| i.id == id)
-            .ok_or(StoreError::IntegrationNotFound)?;
-        self.db.integrations.remove(index);
-        self.persist().await
+        let result = sqlx::query("DELETE FROM accounting.integrations WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(StoreError::IntegrationNotFound);
+        }
+        Ok(())
+    }
+
+    async fn rows_to_bills(
+        &self,
+        rows: Vec<sqlx::postgres::PgRow>,
+    ) -> Result<Vec<Bill>, StoreError> {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<String> = rows.iter().map(|r| r.get("id")).collect();
+        let line_rows = sqlx::query(
+            "SELECT bill_id, line_no, sku_id, description, quantity, unit_price_cents \
+             FROM accounting.bill_line_items WHERE bill_id = ANY($1) ORDER BY bill_id, line_no",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut line_items: HashMap<String, Vec<BillLineItem>> = HashMap::new();
+        for row in line_rows {
+            let bill_id: String = row.get("bill_id");
+            line_items
+                .entry(bill_id)
+                .or_default()
+                .push(row_to_line_item(row));
+        }
+        rows.into_iter()
+            .map(|row| {
+                let id: String = row.get("id");
+                row_to_bill(row, line_items.remove(&id).unwrap_or_default())
+            })
+            .collect()
     }
 
     fn validate_bill_input(
@@ -188,7 +281,7 @@ impl AccountingStore {
         kind: BillKind,
         vendor: &str,
         bill_date: &str,
-        line_items: &[crate::model::BillLineItem],
+        line_items: &[BillLineItem],
         scan_uri: Option<&str>,
     ) -> Result<(), StoreError> {
         if vendor.trim().is_empty() {
@@ -197,6 +290,7 @@ impl AccountingStore {
         if bill_date.trim().is_empty() {
             return Err(StoreError::BillDateRequired);
         }
+        parse_date(bill_date)?;
         if line_items.is_empty() {
             return Err(StoreError::BillNeedsLineItems);
         }
@@ -213,7 +307,7 @@ impl AccountingStore {
         Ok(())
     }
 
-    fn validate_integration_name(
+    async fn validate_integration_name(
         &self,
         name: &str,
         except_id: Option<&str>,
@@ -221,17 +315,184 @@ impl AccountingStore {
         if name.trim().is_empty() {
             return Err(StoreError::IntegrationNameRequired);
         }
-        let normalized = name.trim().to_lowercase();
-        if self
-            .db
-            .integrations
-            .iter()
-            .any(|i| except_id != Some(i.id.as_str()) && i.name.to_lowercase() == normalized)
-        {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM accounting.integrations
+                WHERE lower(name) = lower($1)
+                  AND ($2::text IS NULL OR id <> $2)
+             )",
+        )
+        .bind(name.trim())
+        .bind(except_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if exists {
             return Err(StoreError::DuplicateIntegrationName);
         }
         Ok(())
     }
+}
+
+async fn insert_bill(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bill: &Bill,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO accounting.bills \
+         (id, kind, status, vendor, invoice_number, bill_date, due_date, currency, total_cents, \
+          scan_uri, notes, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&bill.id)
+    .bind(kind_str(bill.kind))
+    .bind(bill_status_str(bill.status))
+    .bind(&bill.vendor)
+    .bind(&bill.invoice_number)
+    .bind(parse_date(&bill.bill_date)?)
+    .bind(bill.due_date.as_deref().map(parse_date).transpose()?)
+    .bind(&bill.currency)
+    .bind(bill.total_cents)
+    .bind(&bill.scan_uri)
+    .bind(&bill.notes)
+    .bind(parse_ts(&bill.updated_at)?)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn replace_line_items(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bill_id: &str,
+    items: &[BillLineItem],
+) -> Result<(), StoreError> {
+    sqlx::query("DELETE FROM accounting.bill_line_items WHERE bill_id = $1")
+        .bind(bill_id)
+        .execute(&mut **tx)
+        .await?;
+    for (line_no, item) in items.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO accounting.bill_line_items \
+             (bill_id, line_no, sku_id, description, quantity, unit_price_cents) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(bill_id)
+        .bind(line_no as i16)
+        .bind(&item.sku_id)
+        .bind(&item.description)
+        .bind(item.quantity as i32)
+        .bind(item.unit_price_cents)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+fn row_to_bill(row: sqlx::postgres::PgRow, line_items: Vec<BillLineItem>) -> Result<Bill, StoreError> {
+    let kind_str: String = row.get("kind");
+    let status_str: String = row.get("status");
+    let bill_date: NaiveDate = row.get("bill_date");
+    let due_date: Option<NaiveDate> = row.get("due_date");
+    Ok(Bill {
+        id: row.get("id"),
+        kind: parse_kind(&kind_str),
+        status: parse_bill_status(&status_str),
+        vendor: row.get("vendor"),
+        invoice_number: row.get("invoice_number"),
+        bill_date: bill_date.format("%Y-%m-%d").to_string(),
+        due_date: due_date.map(|d| d.format("%Y-%m-%d").to_string()),
+        currency: row.get("currency"),
+        line_items,
+        total_cents: row.get("total_cents"),
+        scan_uri: row.get("scan_uri"),
+        notes: row.get("notes"),
+        updated_at: row.get::<DateTime<Utc>, _>("updated_at").to_rfc3339(),
+    })
+}
+
+fn row_to_line_item(row: sqlx::postgres::PgRow) -> BillLineItem {
+    BillLineItem {
+        sku_id: row.get("sku_id"),
+        description: row.get("description"),
+        quantity: row.get::<i32, _>("quantity") as u32,
+        unit_price_cents: row.get("unit_price_cents"),
+    }
+}
+
+fn row_to_integration(row: sqlx::postgres::PgRow) -> Result<Integration, StoreError> {
+    let provider_str: String = row.get("provider");
+    Ok(Integration {
+        id: row.get("id"),
+        name: row.get("name"),
+        provider: parse_provider(&provider_str),
+        enabled: row.get("enabled"),
+        external_account_id: row.get("external_account_id"),
+        webhook_url: row.get("webhook_url"),
+        notes: row.get("notes"),
+        updated_at: row.get::<DateTime<Utc>, _>("updated_at").to_rfc3339(),
+    })
+}
+
+fn kind_str(kind: BillKind) -> &'static str {
+    match kind {
+        BillKind::Scanned => "scanned",
+        BillKind::Digital => "digital",
+    }
+}
+
+fn parse_kind(value: &str) -> BillKind {
+    match value {
+        "scanned" => BillKind::Scanned,
+        _ => BillKind::Digital,
+    }
+}
+
+fn bill_status_str(status: crate::model::BillStatus) -> &'static str {
+    use crate::model::BillStatus;
+    match status {
+        BillStatus::Draft => "draft",
+        BillStatus::Approved => "approved",
+        BillStatus::Paid => "paid",
+        BillStatus::Void => "void",
+    }
+}
+
+fn parse_bill_status(value: &str) -> crate::model::BillStatus {
+    use crate::model::BillStatus;
+    match value {
+        "approved" => BillStatus::Approved,
+        "paid" => BillStatus::Paid,
+        "void" => BillStatus::Void,
+        _ => BillStatus::Draft,
+    }
+}
+
+fn provider_str(provider: crate::model::IntegrationProvider) -> &'static str {
+    use crate::model::IntegrationProvider;
+    match provider {
+        IntegrationProvider::QuickBooks => "quickbooks",
+        IntegrationProvider::Xero => "xero",
+        IntegrationProvider::Custom => "custom",
+    }
+}
+
+fn parse_provider(value: &str) -> crate::model::IntegrationProvider {
+    use crate::model::IntegrationProvider;
+    match value {
+        "quickbooks" => IntegrationProvider::QuickBooks,
+        "xero" => IntegrationProvider::Xero,
+        _ => IntegrationProvider::Custom,
+    }
+}
+
+fn parse_date(value: &str) -> Result<NaiveDate, StoreError> {
+    NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+        .map_err(|e| StoreError::InvalidInput(format!("invalid date: {e}")))
+}
+
+fn parse_ts(value: &str) -> Result<DateTime<Utc>, StoreError> {
+    value
+        .parse::<DateTime<Utc>>()
+        .map_err(|e| StoreError::InvalidInput(format!("invalid timestamp: {e}")))
 }
 
 #[cfg(test)]

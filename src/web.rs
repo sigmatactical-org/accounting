@@ -41,10 +41,15 @@ fn index_page(
         .and(store)
         .and_then(|store: SharedStore| async move {
             let store = store.lock().await;
+            let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+            let integrations = store
+                .list_integrations()
+                .await
+                .map_err(|_| warp::reject::not_found())?;
             let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
             templates::render_index_html(
-                store.list_bills(),
-                store.list_integrations(),
+                bills,
+                integrations,
                 catalog_skus,
                 catalog_notice,
                 None,
@@ -103,7 +108,7 @@ fn edit_bill_page(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let store = store.lock().await;
-            let Some(bill) = store.get_bill(&id) else {
+            let Some(bill) = store.get_bill(&id).await.map_err(|_| warp::reject::not_found())? else {
                 return Err(warp::reject::not_found());
             };
             let (catalog_skus, _) = fetch_catalog_skus().await;
@@ -130,12 +135,12 @@ fn update_bill_form(
                         Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
                             .into_response(),
                         Err(e) => {
-                            let bill = store.get_bill(&id);
+                            let bill = store.get_bill(&id).await.ok().flatten();
                             render_bill_form_error(catalog_skus, bill, values, e)
                         }
                     },
                     Err(e) => {
-                        let bill = store.get_bill(&id);
+                        let bill = store.get_bill(&id).await.ok().flatten();
                         render_bill_form_error(catalog_skus, bill, values, invalid_input(e))
                     }
                 };
@@ -159,9 +164,14 @@ fn delete_bill_form(
                 Err(StoreError::BillNotFound) => Err(warp::reject::not_found()),
                 Err(e) => {
                     let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
+                    let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+                    let integrations = store
+                        .list_integrations()
+                        .await
+                        .map_err(|_| warp::reject::not_found())?;
                     templates::render_index_html(
-                        store.list_bills(),
-                        store.list_integrations(),
+                        bills,
+                        integrations,
                         catalog_skus,
                         catalog_notice,
                         Some(format!("Delete failed: {e}")),
@@ -220,7 +230,11 @@ fn edit_integration_page(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let store = store.lock().await;
-            let Some(integration) = store.get_integration(&id) else {
+            let Some(integration) = store
+                .get_integration(&id)
+                .await
+                .map_err(|_| warp::reject::not_found())?
+            else {
                 return Err(warp::reject::not_found());
             };
             templates::render_integration_form_html(Some(integration), None)
@@ -245,12 +259,12 @@ fn update_integration_form(
                         Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
                             .into_response(),
                         Err(e) => {
-                            let integration = store.get_integration(&id);
+                            let integration = store.get_integration(&id).await.ok().flatten();
                             render_integration_form_error(integration, values, e)
                         }
                     },
                     Err(e) => {
-                        let integration = store.get_integration(&id);
+                        let integration = store.get_integration(&id).await.ok().flatten();
                         render_integration_form_error(integration, values, invalid_input(e))
                     }
                 };
@@ -274,9 +288,14 @@ fn delete_integration_form(
                 Err(StoreError::IntegrationNotFound) => Err(warp::reject::not_found()),
                 Err(e) => {
                     let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
+                    let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+                    let integrations = store
+                        .list_integrations()
+                        .await
+                        .map_err(|_| warp::reject::not_found())?;
                     templates::render_index_html(
-                        store.list_bills(),
-                        store.list_integrations(),
+                        bills,
+                        integrations,
                         catalog_skus,
                         catalog_notice,
                         Some(format!("Delete failed: {e}")),

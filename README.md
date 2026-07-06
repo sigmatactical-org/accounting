@@ -120,7 +120,7 @@ With catalog integration (run catalog on another port when accounting uses 8080)
 
 ```bash
 # Terminal 1 — catalog
-(cd sigma/it/commerce/catalog && ./scripts/prepare-local.sh && PORT=8081 cargo run -p sigma-catalog)
+(cd sigma/it/catalog && ./scripts/prepare-local.sh && PORT=8081 cargo run -p sigma-catalog)
 
 # Terminal 2 — accounting (from sigma/it/accounting)
 ./scripts/prepare-local.sh
@@ -136,7 +136,7 @@ Release is in **`.github/workflows/release.yml`** when configured. Locally:
 docker build -f Dockerfile build/image
 ```
 
-Data is stored in the shared PostgreSQL `accounting` schema (`accounting.document` JSONB table). Postgres runs in the [platform](https://github.com/sigmatactical-org/platform) kind stack — port-forward for local `cargo run`:
+Data is stored in the shared PostgreSQL `accounting` schema (`accounting.bills` and `accounting.integrations` JSONB table). Postgres runs in the [platform](https://github.com/sigmatactical-org/platform) kind stack — port-forward for local `cargo run`:
 
 ```bash
 cd platform && ./scripts/postgres-dev.sh port-forward-bg && ./scripts/postgres-dev.sh migrate

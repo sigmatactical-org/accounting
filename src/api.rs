@@ -81,7 +81,8 @@ fn list_bills(
         .and(warp::get())
         .and(store)
         .and_then(|store: SharedStore| async move {
-            let bills = store.lock().await.list_bills();
+            let store = store.lock().await;
+            let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
             Ok::<_, Rejection>(warp::reply::json(&bills))
         })
 }
@@ -95,7 +96,7 @@ fn get_bill(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let store = store.lock().await;
-            match store.get_bill(&id) {
+            match store.get_bill(&id).await.map_err(|_| warp::reject::not_found())? {
                 Some(bill) => Ok(warp::reply::json(&bill)),
                 None => Err(warp::reject::not_found()),
             }
@@ -170,7 +171,11 @@ fn list_integrations(
         .and(warp::get())
         .and(store)
         .and_then(|store: SharedStore| async move {
-            let integrations = store.lock().await.list_integrations();
+            let store = store.lock().await;
+            let integrations = store
+                .list_integrations()
+                .await
+                .map_err(|_| warp::reject::not_found())?;
             Ok::<_, Rejection>(warp::reply::json(&integrations))
         })
 }
@@ -184,7 +189,11 @@ fn get_integration(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let store = store.lock().await;
-            match store.get_integration(&id) {
+            match store
+                .get_integration(&id)
+                .await
+                .map_err(|_| warp::reject::not_found())?
+            {
                 Some(integration) => Ok(warp::reply::json(&integration)),
                 None => Err(warp::reject::not_found()),
             }
