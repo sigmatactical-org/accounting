@@ -11,7 +11,6 @@ mod web;
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
 use warp::Filter;
 use warp::Reply;
 
@@ -20,8 +19,8 @@ pub use model::{
     IntegrationProvider, UpdateBill, UpdateIntegration,
 };
 
-/// Shared mutable accounting store handle.
-pub type SharedStore = Arc<Mutex<store::AccountingStore>>;
+/// Shared accounting store handle (`PgPool` is internally concurrent).
+pub type SharedStore = Arc<store::AccountingStore>;
 
 /// Resolve listen address from **`PORT`** (default **8080**).
 #[must_use]
@@ -46,7 +45,7 @@ pub fn routes(
 ) -> impl Filter<Extract = (impl Reply,), Error = Infallible> + Clone + Send + 'static {
     use warp::reply::with::header;
 
-    let store = Arc::new(Mutex::new(store));
+    let store = Arc::new(store);
 
     warp::path("up")
         .and(warp::get())

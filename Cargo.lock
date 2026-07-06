@@ -1618,7 +1618,10 @@ name = "sigma-pg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "reqwest",
+ "serde",
  "sqlx",
+ "thiserror",
  "tokio",
  "tracing",
 ]
@@ -1630,6 +1633,7 @@ dependencies = [
  "askama",
  "mime_guess",
  "rust-embed",
+ "tracing",
  "warp",
 ]
 

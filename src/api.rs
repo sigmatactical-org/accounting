@@ -39,6 +39,22 @@ fn store_error_status(err: &StoreError) -> StatusCode {
     }
 }
 
+fn internal_auth() -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    warp::header::optional::<String>("authorization")
+        .and(warp::header::optional::<String>("x-sigma-internal-token"))
+        .and_then(|authorization: Option<String>, internal_token: Option<String>| async move {
+            if sigma_pg::clients::internal::authorize_internal(
+                authorization.as_deref(),
+                internal_token.as_deref(),
+            ) {
+                Ok::<_, Rejection>(())
+            } else {
+                Err(warp::reject::not_found())
+            }
+        })
+        .untuple_one()
+}
+
 pub fn routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
@@ -55,11 +71,11 @@ pub fn routes(
         .or(list_catalog_skus())
 }
 
-fn list_catalog_skus()
--> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+fn list_catalog_skus() -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
     warp::path!("catalog" / "skus")
         .and(warp::path::end())
         .and(warp::get())
+        .and(internal_auth())
         .and_then(|| async {
             let response = match catalog::fetch_skus().await {
                 Ok(skus) => warp::reply::json(&skus).into_response(),
@@ -79,9 +95,9 @@ fn list_bills(
     warp::path("bills")
         .and(warp::path::end())
         .and(warp::get())
+        .and(internal_auth())
         .and(store)
         .and_then(|store: SharedStore| async move {
-            let store = store.lock().await;
             let bills = store
                 .list_bills()
                 .await
@@ -96,9 +112,9 @@ fn get_bill(
     warp::path!("bills" / String)
         .and(warp::path::end())
         .and(warp::get())
+        .and(internal_auth())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let store = store.lock().await;
             match store
                 .get_bill(&id)
                 .await
@@ -117,9 +133,9 @@ fn create_bill(
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
+        .and(internal_auth())
         .and(store)
         .and_then(|input: CreateBill, store: SharedStore| async move {
-            let mut store = store.lock().await;
             let response = match store.create_bill(input).await {
                 Ok(bill) => warp::reply::with_status(warp::reply::json(&bill), StatusCode::CREATED)
                     .into_response(),
@@ -136,10 +152,10 @@ fn update_bill(
         .and(warp::path::end())
         .and(warp::put())
         .and(warp::body::json())
+        .and(internal_auth())
         .and(store)
         .and_then(
             |id: String, input: UpdateBill, store: SharedStore| async move {
-                let mut store = store.lock().await;
                 let response = match store.update_bill(&id, input).await {
                     Ok(bill) => warp::reply::json(&bill).into_response(),
                     Err(StoreError::BillNotFound) => return Err(warp::reject::not_found()),
@@ -156,9 +172,9 @@ fn delete_bill(
     warp::path!("bills" / String)
         .and(warp::path::end())
         .and(warp::delete())
+        .and(internal_auth())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let mut store = store.lock().await;
             let response = match store.delete_bill(&id).await {
                 Ok(()) => {
                     warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT).into_response()
@@ -176,9 +192,9 @@ fn list_integrations(
     warp::path("integrations")
         .and(warp::path::end())
         .and(warp::get())
+        .and(internal_auth())
         .and(store)
         .and_then(|store: SharedStore| async move {
-            let store = store.lock().await;
             let integrations = store
                 .list_integrations()
                 .await
@@ -193,9 +209,9 @@ fn get_integration(
     warp::path!("integrations" / String)
         .and(warp::path::end())
         .and(warp::get())
+        .and(internal_auth())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let store = store.lock().await;
             match store
                 .get_integration(&id)
                 .await
@@ -214,9 +230,9 @@ fn create_integration(
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
+        .and(internal_auth())
         .and(store)
         .and_then(|input: CreateIntegration, store: SharedStore| async move {
-            let mut store = store.lock().await;
             let response = match store.create_integration(input).await {
                 Ok(integration) => {
                     warp::reply::with_status(warp::reply::json(&integration), StatusCode::CREATED)
@@ -235,10 +251,10 @@ fn update_integration(
         .and(warp::path::end())
         .and(warp::put())
         .and(warp::body::json())
+        .and(internal_auth())
         .and(store)
         .and_then(
             |id: String, input: UpdateIntegration, store: SharedStore| async move {
-                let mut store = store.lock().await;
                 let response = match store.update_integration(&id, input).await {
                     Ok(integration) => warp::reply::json(&integration).into_response(),
                     Err(StoreError::IntegrationNotFound) => return Err(warp::reject::not_found()),
@@ -255,9 +271,9 @@ fn delete_integration(
     warp::path!("integrations" / String)
         .and(warp::path::end())
         .and(warp::delete())
+        .and(internal_auth())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let mut store = store.lock().await;
             let response = match store.delete_integration(&id).await {
                 Ok(()) => {
                     warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT).into_response()

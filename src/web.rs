@@ -40,7 +40,6 @@ fn index_page(
         .and(warp::get())
         .and(store)
         .and_then(|store: SharedStore| async move {
-            let store = store.lock().await;
             let bills = store
                 .list_bills()
                 .await
@@ -81,7 +80,6 @@ fn create_bill_form(
         .and(warp::body::form())
         .and(store)
         .and_then(|form: BillForm, store: SharedStore| async move {
-            let mut store = store.lock().await;
             let values = bill_form_to_values(&form);
             let (catalog_skus, _) = fetch_catalog_skus().await;
             let response = match form.into_create() {
@@ -104,7 +102,6 @@ fn edit_bill_page(
         .and(warp::get())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let store = store.lock().await;
             let Some(bill) = store
                 .get_bill(&id)
                 .await
@@ -128,7 +125,6 @@ fn update_bill_form(
         .and(store)
         .and_then(
             |id: String, form: BillForm, store: SharedStore| async move {
-                let mut store = store.lock().await;
                 let values = bill_form_to_values(&form);
                 let (catalog_skus, _) = fetch_catalog_skus().await;
                 let response = match form.into_update() {
@@ -157,7 +153,6 @@ fn delete_bill_form(
         .and(warp::post())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let mut store = store.lock().await;
             match store.delete_bill(&id).await {
                 Ok(()) => {
                     Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())
@@ -211,7 +206,6 @@ fn create_integration_form(
         .and(warp::body::form())
         .and(store)
         .and_then(|form: IntegrationForm, store: SharedStore| async move {
-            let mut store = store.lock().await;
             let values = integration_form_to_values(&form);
             let response = match form.into_create() {
                 Ok(input) => match store.create_integration(input).await {
@@ -233,7 +227,6 @@ fn edit_integration_page(
         .and(warp::get())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let store = store.lock().await;
             let Some(integration) = store
                 .get_integration(&id)
                 .await
@@ -256,7 +249,6 @@ fn update_integration_form(
         .and(store)
         .and_then(
             |id: String, form: IntegrationForm, store: SharedStore| async move {
-                let mut store = store.lock().await;
                 let values = integration_form_to_values(&form);
                 let response = match form.into_update() {
                     Ok(input) => match store.update_integration(&id, input).await {
@@ -284,7 +276,6 @@ fn delete_integration_form(
         .and(warp::post())
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
-            let mut store = store.lock().await;
             match store.delete_integration(&id).await {
                 Ok(()) => {
                     Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())

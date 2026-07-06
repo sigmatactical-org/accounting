@@ -48,7 +48,7 @@ pub struct AccountingStore {
 
 impl AccountingStore {
     pub async fn connect() -> Result<Self, StoreError> {
-        let pool = sigma_pg::connect().await?;
+        let pool = sigma_pg::connect_as("accounting").await?;
         Ok(Self { pool })
     }
 
@@ -92,7 +92,7 @@ impl AccountingStore {
         }
     }
 
-    pub async fn create_bill(&mut self, input: CreateBill) -> Result<Bill, StoreError> {
+    pub async fn create_bill(&self, input: CreateBill) -> Result<Bill, StoreError> {
         self.validate_bill_input(
             input.kind,
             &input.vendor,
@@ -108,7 +108,7 @@ impl AccountingStore {
         Ok(bill)
     }
 
-    pub async fn update_bill(&mut self, id: &str, input: UpdateBill) -> Result<Bill, StoreError> {
+    pub async fn update_bill(&self, id: &str, input: UpdateBill) -> Result<Bill, StoreError> {
         if self.get_bill(id).await?.is_none() {
             return Err(StoreError::BillNotFound);
         }
@@ -146,7 +146,7 @@ impl AccountingStore {
         Ok(bill)
     }
 
-    pub async fn delete_bill(&mut self, id: &str) -> Result<(), StoreError> {
+    pub async fn delete_bill(&self, id: &str) -> Result<(), StoreError> {
         let result = sqlx::query("DELETE FROM accounting.bills WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -179,7 +179,7 @@ impl AccountingStore {
     }
 
     pub async fn create_integration(
-        &mut self,
+        &self,
         input: CreateIntegration,
     ) -> Result<Integration, StoreError> {
         self.validate_integration_name(&input.name, None).await?;
@@ -203,7 +203,7 @@ impl AccountingStore {
     }
 
     pub async fn update_integration(
-        &mut self,
+        &self,
         id: &str,
         input: UpdateIntegration,
     ) -> Result<Integration, StoreError> {
@@ -235,7 +235,7 @@ impl AccountingStore {
         Ok(integration)
     }
 
-    pub async fn delete_integration(&mut self, id: &str) -> Result<(), StoreError> {
+    pub async fn delete_integration(&self, id: &str) -> Result<(), StoreError> {
         let result = sqlx::query("DELETE FROM accounting.integrations WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -521,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_digital_bill() {
-        let mut store = test_store().await;
+        let store = test_store().await;
         let bill = store
             .create_bill(CreateBill {
                 kind: BillKind::Digital,
@@ -544,7 +544,7 @@ mod tests {
 
     #[tokio::test]
     async fn scanned_bill_requires_scan_uri() {
-        let mut store = test_store().await;
+        let store = test_store().await;
         let err = store
             .create_bill(CreateBill {
                 kind: BillKind::Scanned,
@@ -565,7 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_integration() {
-        let mut store = test_store().await;
+        let store = test_store().await;
         let integration = store
             .create_integration(CreateIntegration {
                 name: "QuickBooks Production".to_string(),
