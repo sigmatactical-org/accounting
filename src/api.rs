@@ -42,16 +42,18 @@ fn store_error_status(err: &StoreError) -> StatusCode {
 fn internal_auth() -> impl Filter<Extract = (), Error = Rejection> + Clone {
     warp::header::optional::<String>("authorization")
         .and(warp::header::optional::<String>("x-sigma-internal-token"))
-        .and_then(|authorization: Option<String>, internal_token: Option<String>| async move {
-            if sigma_pg::clients::internal::authorize_internal(
-                authorization.as_deref(),
-                internal_token.as_deref(),
-            ) {
-                Ok::<_, Rejection>(())
-            } else {
-                Err(warp::reject::not_found())
-            }
-        })
+        .and_then(
+            |authorization: Option<String>, internal_token: Option<String>| async move {
+                if sigma_pg::clients::internal::authorize_internal(
+                    authorization.as_deref(),
+                    internal_token.as_deref(),
+                ) {
+                    Ok::<_, Rejection>(())
+                } else {
+                    Err(warp::reject::not_found())
+                }
+            },
+        )
         .untuple_one()
 }
 
@@ -71,7 +73,8 @@ pub fn routes(
         .or(list_catalog_skus())
 }
 
-fn list_catalog_skus() -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+fn list_catalog_skus()
+-> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
     warp::path!("catalog" / "skus")
         .and(warp::path::end())
         .and(warp::get())
