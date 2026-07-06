@@ -120,9 +120,9 @@ With catalog integration (run catalog on another port when accounting uses 8080)
 
 ```bash
 # Terminal 1 — catalog
-(cd sigma/commerce/catalog && ./scripts/prepare-local.sh && PORT=8081 cargo run -p sigma-catalog)
+(cd sigma/it/commerce/catalog && ./scripts/prepare-local.sh && PORT=8081 cargo run -p sigma-catalog)
 
-# Terminal 2 — accounting (from sigma/accounting)
+# Terminal 2 — accounting (from sigma/it/accounting)
 ./scripts/prepare-local.sh
 ACCOUNTING_CATALOG_BASE_URL=http://127.0.0.1:8081/ cargo run -p sigma-accounting
 ```
