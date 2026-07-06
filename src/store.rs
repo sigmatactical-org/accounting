@@ -63,6 +63,11 @@ impl AccountingStore {
         Ok(store)
     }
 
+    #[must_use]
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     pub async fn list_bills(&self) -> Result<Vec<Bill>, StoreError> {
         let rows = sqlx::query(
             "SELECT id, kind, status, vendor, invoice_number, bill_date, due_date, currency, \
