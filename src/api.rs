@@ -82,7 +82,10 @@ fn list_bills(
         .and(store)
         .and_then(|store: SharedStore| async move {
             let store = store.lock().await;
-            let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+            let bills = store
+                .list_bills()
+                .await
+                .map_err(|_| warp::reject::not_found())?;
             Ok::<_, Rejection>(warp::reply::json(&bills))
         })
 }
@@ -96,7 +99,11 @@ fn get_bill(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let store = store.lock().await;
-            match store.get_bill(&id).await.map_err(|_| warp::reject::not_found())? {
+            match store
+                .get_bill(&id)
+                .await
+                .map_err(|_| warp::reject::not_found())?
+            {
                 Some(bill) => Ok(warp::reply::json(&bill)),
                 None => Err(warp::reject::not_found()),
             }

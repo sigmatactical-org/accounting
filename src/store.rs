@@ -210,7 +210,8 @@ impl AccountingStore {
         if self.get_integration(id).await?.is_none() {
             return Err(StoreError::IntegrationNotFound);
         }
-        self.validate_integration_name(&input.name, Some(id)).await?;
+        self.validate_integration_name(&input.name, Some(id))
+            .await?;
         let mut integration = self
             .get_integration(id)
             .await?
@@ -387,7 +388,10 @@ async fn replace_line_items(
     Ok(())
 }
 
-fn row_to_bill(row: sqlx::postgres::PgRow, line_items: Vec<BillLineItem>) -> Result<Bill, StoreError> {
+fn row_to_bill(
+    row: sqlx::postgres::PgRow,
+    line_items: Vec<BillLineItem>,
+) -> Result<Bill, StoreError> {
     let kind_str: String = row.get("kind");
     let status_str: String = row.get("status");
     let bill_date: NaiveDate = row.get("bill_date");

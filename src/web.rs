@@ -41,21 +41,18 @@ fn index_page(
         .and(store)
         .and_then(|store: SharedStore| async move {
             let store = store.lock().await;
-            let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+            let bills = store
+                .list_bills()
+                .await
+                .map_err(|_| warp::reject::not_found())?;
             let integrations = store
                 .list_integrations()
                 .await
                 .map_err(|_| warp::reject::not_found())?;
             let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
-            templates::render_index_html(
-                bills,
-                integrations,
-                catalog_skus,
-                catalog_notice,
-                None,
-            )
-            .map(warp::reply::html)
-            .map_err(|_| warp::reject::not_found())
+            templates::render_index_html(bills, integrations, catalog_skus, catalog_notice, None)
+                .map(warp::reply::html)
+                .map_err(|_| warp::reject::not_found())
         })
 }
 
@@ -108,7 +105,11 @@ fn edit_bill_page(
         .and(store)
         .and_then(|id: String, store: SharedStore| async move {
             let store = store.lock().await;
-            let Some(bill) = store.get_bill(&id).await.map_err(|_| warp::reject::not_found())? else {
+            let Some(bill) = store
+                .get_bill(&id)
+                .await
+                .map_err(|_| warp::reject::not_found())?
+            else {
                 return Err(warp::reject::not_found());
             };
             let (catalog_skus, _) = fetch_catalog_skus().await;
@@ -164,7 +165,10 @@ fn delete_bill_form(
                 Err(StoreError::BillNotFound) => Err(warp::reject::not_found()),
                 Err(e) => {
                     let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
-                    let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+                    let bills = store
+                        .list_bills()
+                        .await
+                        .map_err(|_| warp::reject::not_found())?;
                     let integrations = store
                         .list_integrations()
                         .await
@@ -288,7 +292,10 @@ fn delete_integration_form(
                 Err(StoreError::IntegrationNotFound) => Err(warp::reject::not_found()),
                 Err(e) => {
                     let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
-                    let bills = store.list_bills().await.map_err(|_| warp::reject::not_found())?;
+                    let bills = store
+                        .list_bills()
+                        .await
+                        .map_err(|_| warp::reject::not_found())?;
                     let integrations = store
                         .list_integrations()
                         .await
