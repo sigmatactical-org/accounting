@@ -4,7 +4,21 @@ use crate::catalog::CatalogSku;
 use crate::model::{
     Bill, BillKind, BillStatus, Integration, IntegrationProvider, format_line_items_text,
 };
+use sigma_identity_nav::{AppSiteNav, render_app_site_nav};
 use sigma_theme::copyright_years;
+
+fn site_nav(return_path: &str) -> Result<String, askama::Error> {
+    render_app_site_nav(&AppSiteNav {
+        identity_base: &crate::config::identity_public_base_url(),
+        app_base: &crate::config::public_base_url(),
+        contact_base: &crate::config::contact_public_base_url(),
+        cart_url: &crate::config::cart_public_base_url(),
+        cart_count: 0,
+        return_path,
+        show_contact_us: false,
+        leading_html: "",
+    })
+}
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -15,6 +29,7 @@ struct IndexTemplate {
     catalog_notice: Option<String>,
     catalog_configured: bool,
     message: Option<String>,
+    site_nav: String,
     copyright_years: String,
 }
 
@@ -38,6 +53,7 @@ struct BillFormTemplate {
     notes: String,
     catalog_skus: Vec<CatalogSkuRef>,
     error: Option<String>,
+    site_nav: String,
     copyright_years: String,
 }
 
@@ -54,6 +70,7 @@ struct IntegrationFormTemplate {
     webhook_url: String,
     notes: String,
     error: Option<String>,
+    site_nav: String,
     copyright_years: String,
 }
 
@@ -226,6 +243,10 @@ fn render_bill_form(
 ) -> Result<String, askama::Error> {
     let kind = values.kind.to_lowercase();
     let status = values.status.to_lowercase();
+    let return_path = bill
+        .as_ref()
+        .map(|entry| format!("/bills/{}/edit", entry.id))
+        .unwrap_or_else(|| "/bills/new".to_string());
     BillFormTemplate {
         bill,
         kind_scanned: kind == "scanned",
@@ -244,6 +265,7 @@ fn render_bill_form(
         notes: values.notes,
         catalog_skus: catalog_sku_refs(catalog_skus),
         error,
+        site_nav: site_nav(&return_path)?,
         copyright_years: copyright_years(),
     }
     .render()
@@ -255,6 +277,10 @@ fn render_integration_form(
     values: IntegrationFormValues,
 ) -> Result<String, askama::Error> {
     let provider = values.provider.to_lowercase();
+    let return_path = integration
+        .as_ref()
+        .map(|entry| format!("/integrations/{}/edit", entry.id))
+        .unwrap_or_else(|| "/integrations/new".to_string());
     IntegrationFormTemplate {
         integration,
         name: values.name,
@@ -266,6 +292,7 @@ fn render_integration_form(
         webhook_url: values.webhook_url,
         notes: values.notes,
         error,
+        site_nav: site_nav(&return_path)?,
         copyright_years: copyright_years(),
     }
     .render()
@@ -288,6 +315,7 @@ pub fn render_index_html(
         catalog_notice,
         catalog_configured: crate::config::catalog_configured(),
         message,
+        site_nav: site_nav("/")?,
         copyright_years: copyright_years(),
     }
     .render()

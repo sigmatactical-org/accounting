@@ -1604,6 +1604,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sigma-identity-nav",
  "sigma-pg",
  "sigma-theme",
  "sqlx",
@@ -1611,6 +1612,29 @@ dependencies = [
  "tokio",
  "uuid",
  "warp",
+]
+
+[[package]]
+name = "sigma-cart-nav"
+version = "0.1.0"
+dependencies = [
+ "askama",
+]
+
+[[package]]
+name = "sigma-contact-nav"
+version = "0.1.0"
+dependencies = [
+ "askama",
+]
+
+[[package]]
+name = "sigma-identity-nav"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "sigma-cart-nav",
+ "sigma-contact-nav",
 ]
 
 [[package]]
