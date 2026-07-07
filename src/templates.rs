@@ -6,6 +6,11 @@ use crate::model::{
 };
 use sigma_identity_nav::{AppSiteNav, render_app_site_nav};
 use sigma_theme::copyright_years;
+use sigma_theme::nav::SiteHeader;
+
+fn page_header(brand: &str) -> SiteHeader {
+    SiteHeader::new(brand)
+}
 
 fn site_nav(return_path: &str) -> Result<String, askama::Error> {
     render_app_site_nav(&AppSiteNav {
@@ -29,6 +34,7 @@ struct IndexTemplate {
     catalog_notice: Option<String>,
     catalog_configured: bool,
     message: Option<String>,
+    site_header: SiteHeader,
     site_nav: String,
     copyright_years: String,
 }
@@ -53,6 +59,7 @@ struct BillFormTemplate {
     notes: String,
     catalog_skus: Vec<CatalogSkuRef>,
     error: Option<String>,
+    site_header: SiteHeader,
     site_nav: String,
     copyright_years: String,
 }
@@ -70,6 +77,7 @@ struct IntegrationFormTemplate {
     webhook_url: String,
     notes: String,
     error: Option<String>,
+    site_header: SiteHeader,
     site_nav: String,
     copyright_years: String,
 }
@@ -265,6 +273,7 @@ fn render_bill_form(
         notes: values.notes,
         catalog_skus: catalog_sku_refs(catalog_skus),
         error,
+        site_header: page_header("Sigma Accounting"),
         site_nav: site_nav(&return_path)?,
         copyright_years: copyright_years(),
     }
@@ -292,6 +301,7 @@ fn render_integration_form(
         webhook_url: values.webhook_url,
         notes: values.notes,
         error,
+        site_header: page_header("Sigma Accounting"),
         site_nav: site_nav(&return_path)?,
         copyright_years: copyright_years(),
     }
@@ -315,6 +325,7 @@ pub fn render_index_html(
         catalog_notice,
         catalog_configured: crate::config::catalog_configured(),
         message,
+        site_header: page_header("Sigma Accounting"),
         site_nav: site_nav("/")?,
         copyright_years: copyright_years(),
     }
