@@ -4,9 +4,9 @@ use crate::catalog::CatalogSku;
 use crate::model::{
     Bill, BillKind, BillStatus, Integration, IntegrationProvider, format_line_items_text,
 };
-use sigma_theme::site_nav::{AppSiteNav, render_app_site_nav};
 use sigma_theme::copyright_years;
 use sigma_theme::nav::SiteHeader;
+use sigma_theme::site_nav::{AppSiteNav, render_app_site_nav};
 
 fn page_header(brand: &str) -> SiteHeader {
     SiteHeader::new(brand)
