@@ -4,7 +4,7 @@ use crate::catalog::CatalogSku;
 use crate::model::{
     Bill, BillKind, BillStatus, Integration, IntegrationProvider, format_line_items_text,
 };
-use sigma_identity_nav::{AppSiteNav, render_app_site_nav};
+use sigma_theme::site_nav::{AppSiteNav, render_app_site_nav};
 use sigma_theme::copyright_years;
 use sigma_theme::nav::SiteHeader;
 
@@ -20,6 +20,7 @@ fn site_nav(return_path: &str) -> Result<String, askama::Error> {
         cart_url: &crate::config::cart_public_base_url(),
         cart_count: 0,
         return_path,
+        show_cart: true,
         show_contact_us: false,
         leading_html: "",
     })
