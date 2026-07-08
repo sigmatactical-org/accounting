@@ -81,6 +81,7 @@ mod tests {
     use warp::http::StatusCode;
 
     async fn test_store() -> store::AccountingStore {
+        sigma_pg::clients::internal::ensure_test_internal_token();
         store::AccountingStore::connect_empty()
             .await
             .expect("PostgreSQL required for tests")
@@ -115,6 +116,10 @@ mod tests {
             .method("GET")
             .path("/bills")
             .header("accept", "application/json")
+            .header(
+                "x-sigma-internal-token",
+                sigma_pg::clients::internal::TEST_INTERNAL_TOKEN,
+            )
             .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -128,6 +133,7 @@ mod tests {
             .method("POST")
             .path("/bills")
             .header("content-type", "application/json")
+            .header("x-sigma-internal-token", sigma_pg::clients::internal::TEST_INTERNAL_TOKEN)
             .body(
                 r#"{"kind":"digital","vendor":"Acme Corp","invoice_number":"INV-1","bill_date":"2026-01-15","line_items":[{"description":"Supplies","quantity":1,"unit_price_cents":2500}]}"#,
             )
@@ -146,6 +152,10 @@ mod tests {
             .method("POST")
             .path("/integrations")
             .header("content-type", "application/json")
+            .header(
+                "x-sigma-internal-token",
+                sigma_pg::clients::internal::TEST_INTERNAL_TOKEN,
+            )
             .body(r#"{"name":"QuickBooks","provider":"quickbooks","enabled":true}"#)
             .reply(&routes(test_store().await))
             .await;
@@ -160,6 +170,10 @@ mod tests {
         let res = warp::test::request()
             .method("GET")
             .path("/catalog/skus")
+            .header(
+                "x-sigma-internal-token",
+                sigma_pg::clients::internal::TEST_INTERNAL_TOKEN,
+            )
             .reply(&routes(test_store().await))
             .await;
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);

@@ -1604,7 +1604,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sigma-identity-nav",
  "sigma-pg",
  "sigma-theme",
  "sqlx",
