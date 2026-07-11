@@ -1,10 +1,13 @@
 [package]
+
+
 name = "sigma-accounting"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90.0"
 license = "MIT OR Apache-2.0"
 authors = ["Sigma Tactical Group contributors <https://github.com/sigmatactical-org>"]
+homepage = "https://sigmatactical.org"
 description = "Accounting for Sigma Tactical Group — bills, integrations, and catalog-linked line items"
 publish = false
 
