@@ -1,3 +1,20 @@
+mod bill_form_template;
+mod bill_form_values;
+mod bill_row;
+mod catalog_sku_ref;
+mod index_template;
+mod integration_form_template;
+mod integration_form_values;
+mod integration_row;
+pub(crate) use bill_form_template::BillFormTemplate;
+pub use bill_form_values::BillFormValues;
+pub use bill_row::BillRow;
+pub use catalog_sku_ref::CatalogSkuRef;
+pub(crate) use index_template::IndexTemplate;
+pub(crate) use integration_form_template::IntegrationFormTemplate;
+pub use integration_form_values::IntegrationFormValues;
+pub use integration_row::IntegrationRow;
+
 use askama::Template;
 
 use crate::catalog::CatalogSku;
@@ -24,103 +41,6 @@ fn site_nav(return_path: &str) -> Result<String, askama::Error> {
         show_contact_us: false,
         leading_html: "",
     })
-}
-
-#[derive(Template)]
-#[template(path = "index.html")]
-struct IndexTemplate {
-    bills: Vec<BillRow>,
-    integrations: Vec<IntegrationRow>,
-    catalog_skus: Vec<CatalogSkuRef>,
-    catalog_notice: Option<String>,
-    catalog_configured: bool,
-    message: Option<String>,
-    site_header: SiteHeader,
-    site_nav: String,
-    copyright_years: String,
-}
-
-#[derive(Template)]
-#[template(path = "bill_form.html")]
-struct BillFormTemplate {
-    bill: Option<Bill>,
-    kind_scanned: bool,
-    kind_digital: bool,
-    status_draft: bool,
-    status_approved: bool,
-    status_paid: bool,
-    status_void: bool,
-    vendor: String,
-    invoice_number: String,
-    bill_date: String,
-    due_date: String,
-    currency: String,
-    line_items: String,
-    scan_uri: String,
-    notes: String,
-    catalog_skus: Vec<CatalogSkuRef>,
-    error: Option<String>,
-    site_header: SiteHeader,
-    site_nav: String,
-    copyright_years: String,
-}
-
-#[derive(Template)]
-#[template(path = "integration_form.html")]
-struct IntegrationFormTemplate {
-    integration: Option<Integration>,
-    name: String,
-    provider_quickbooks: bool,
-    provider_xero: bool,
-    provider_custom: bool,
-    enabled: bool,
-    external_account_id: String,
-    webhook_url: String,
-    notes: String,
-    error: Option<String>,
-    site_header: SiteHeader,
-    site_nav: String,
-    copyright_years: String,
-}
-
-pub struct BillRow {
-    pub bill: Bill,
-    pub kind_label: String,
-    pub status_label: String,
-    pub total_display: String,
-}
-
-pub struct IntegrationRow {
-    pub integration: Integration,
-    pub provider_label: String,
-}
-
-pub struct CatalogSkuRef {
-    pub id: String,
-    pub sku_code: String,
-    pub name: String,
-}
-
-pub struct BillFormValues {
-    pub kind: String,
-    pub status: String,
-    pub vendor: String,
-    pub invoice_number: String,
-    pub bill_date: String,
-    pub due_date: String,
-    pub currency: String,
-    pub line_items: String,
-    pub scan_uri: String,
-    pub notes: String,
-}
-
-pub struct IntegrationFormValues {
-    pub name: String,
-    pub provider: String,
-    pub enabled: bool,
-    pub external_account_id: String,
-    pub webhook_url: String,
-    pub notes: String,
 }
 
 fn bill_rows(bills: Vec<Bill>) -> Vec<BillRow> {

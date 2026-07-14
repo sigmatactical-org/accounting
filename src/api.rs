@@ -57,6 +57,7 @@ fn internal_auth() -> impl Filter<Extract = (), Error = Rejection> + Clone {
         .untuple_one()
 }
 
+/// Build this module's routes.
 pub fn routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {

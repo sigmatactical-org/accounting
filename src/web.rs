@@ -9,6 +9,7 @@ use crate::model::{BillForm, IntegrationForm};
 use crate::store::StoreError;
 use crate::templates::{self, BillFormValues, IntegrationFormValues};
 
+/// Build this module's routes.
 pub fn routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
