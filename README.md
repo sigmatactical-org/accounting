@@ -1,5 +1,8 @@
 # sigma-accounting
 
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![MSRV](https://img.shields.io/badge/MSRV-1.97.0-blue.svg)](https://www.rust-lang.org)
+
 Accounting for Sigma Tactical Group. Stores scanned and digital bills, external integrations, and catalog-linked line items, with a server-rendered web UI and JSON API.
 
 Repository: https://github.com/sigmatactical-org/accounting
