@@ -1,5 +1,7 @@
 //! Sigma Accounting: bills, integrations, and catalog-linked line items.
 
+#![forbid(unsafe_code)]
+
 mod api;
 pub mod catalog;
 pub mod config;
