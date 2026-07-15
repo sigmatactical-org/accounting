@@ -26,6 +26,7 @@ impl AccountingStore {
     #[cfg(test)]
     pub async fn connect_empty() -> Result<Self, StoreError> {
         let store = Self::connect().await?;
+        sigma_pg::assert_disposable_test_db(&store.pool).await;
         sqlx::query(
             "TRUNCATE accounting.expenses, accounting.bill_line_items, accounting.bills, \
              accounting.integrations",
