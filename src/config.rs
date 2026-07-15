@@ -73,6 +73,30 @@ pub fn catalog_configured() -> bool {
     catalog_base_url().is_some()
 }
 
+/// Base URL of the orders service's internal API (e.g. `http://127.0.0.1:8085/`).
+#[must_use]
+pub fn orders_base_url() -> Option<String> {
+    std::env::var("ACCOUNTING_ORDERS_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(normalize_base_url)
+}
+
+/// Whether orders integration is configured.
+#[must_use]
+pub fn orders_configured() -> bool {
+    orders_base_url().is_some()
+}
+
+/// Public base URL of the orders admin UI, for bill order links.
+#[must_use]
+pub fn orders_public_base_url() -> Option<String> {
+    std::env::var("ACCOUNTING_ORDERS_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(normalize_base_url)
+}
+
 /// PostgreSQL connection URL (shared Sigma database).
 #[must_use]
 pub fn database_url() -> String {

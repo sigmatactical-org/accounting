@@ -9,6 +9,7 @@ pub struct BillFormValues {
     pub status: String,
     pub vendor: String,
     pub invoice_number: String,
+    pub order_id: String,
     pub bill_date: String,
     pub due_date: String,
     pub currency: String,

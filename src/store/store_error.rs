@@ -20,6 +20,20 @@ pub enum StoreError {
     ScanUriRequired,
     #[error("line item quantity must be at least 1")]
     InvalidQuantity,
+    #[error("expense not found")]
+    ExpenseNotFound,
+    #[error("expense description is required")]
+    ExpenseDescriptionRequired,
+    #[error("expense date is required")]
+    ExpenseDateRequired,
+    #[error("expense amount must be at least 1 cent")]
+    InvalidAmount,
+    #[error("linked bill not found")]
+    LinkedBillNotFound,
+    #[error("linked order not found")]
+    OrderNotFound,
+    #[error("orders service error: {0}")]
+    Orders(String),
     #[error("integration name is required")]
     IntegrationNameRequired,
     #[error("integration name already exists")]

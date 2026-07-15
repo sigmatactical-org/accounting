@@ -9,6 +9,8 @@ use sigma_theme::nav::SiteHeader;
 #[template(path = "index.html")]
 pub(crate) struct IndexTemplate {
     pub(crate) bills: Vec<BillRow>,
+    pub(crate) expenses: Vec<ExpenseRow>,
+    pub(crate) expense_total: Option<String>,
     pub(crate) integrations: Vec<IntegrationRow>,
     pub(crate) catalog_skus: Vec<CatalogSkuRef>,
     pub(crate) catalog_notice: Option<String>,

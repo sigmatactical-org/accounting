@@ -6,7 +6,9 @@ use warp::{Filter, Rejection, Reply};
 
 use crate::SharedStore;
 use crate::catalog;
-use crate::model::{CreateBill, CreateIntegration, UpdateBill, UpdateIntegration};
+use crate::model::{
+    CreateBill, CreateExpense, CreateIntegration, UpdateBill, UpdateExpense, UpdateIntegration,
+};
 use crate::store::StoreError;
 
 #[derive(serde::Serialize)]
@@ -26,15 +28,22 @@ fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
 
 fn store_error_status(err: &StoreError) -> StatusCode {
     match err {
-        StoreError::BillNotFound | StoreError::IntegrationNotFound => StatusCode::NOT_FOUND,
+        StoreError::BillNotFound
+        | StoreError::IntegrationNotFound
+        | StoreError::ExpenseNotFound => StatusCode::NOT_FOUND,
         StoreError::VendorRequired
         | StoreError::BillDateRequired
         | StoreError::BillNeedsLineItems
         | StoreError::ScanUriRequired
         | StoreError::InvalidQuantity
+        | StoreError::ExpenseDescriptionRequired
+        | StoreError::ExpenseDateRequired
+        | StoreError::InvalidAmount
+        | StoreError::LinkedBillNotFound
         | StoreError::IntegrationNameRequired => StatusCode::BAD_REQUEST,
         StoreError::DuplicateIntegrationName => StatusCode::CONFLICT,
-        StoreError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        StoreError::OrderNotFound | StoreError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        StoreError::Orders(_) => StatusCode::BAD_GATEWAY,
         StoreError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -66,6 +75,11 @@ pub fn routes(
         .or(create_bill(store.clone()))
         .or(update_bill(store.clone()))
         .or(delete_bill(store.clone()))
+        .or(list_expenses(store.clone()))
+        .or(get_expense(store.clone()))
+        .or(create_expense(store.clone()))
+        .or(update_expense(store.clone()))
+        .or(delete_expense(store.clone()))
         .or(list_integrations(store.clone()))
         .or(get_integration(store.clone()))
         .or(create_integration(store.clone()))
@@ -140,6 +154,9 @@ fn create_bill(
         .and(internal_auth())
         .and(store)
         .and_then(|input: CreateBill, store: SharedStore| async move {
+            if let Err(e) = crate::orders::validate_order_link(input.order_id.as_deref()).await {
+                return Ok(json_error(store_error_status(&e), e.to_string()));
+            }
             let response = match store.create_bill(input).await {
                 Ok(bill) => warp::reply::with_status(warp::reply::json(&bill), StatusCode::CREATED)
                     .into_response(),
@@ -160,6 +177,10 @@ fn update_bill(
         .and(store)
         .and_then(
             |id: String, input: UpdateBill, store: SharedStore| async move {
+                if let Err(e) = crate::orders::validate_order_link(input.order_id.as_deref()).await
+                {
+                    return Ok(json_error(store_error_status(&e), e.to_string()));
+                }
                 let response = match store.update_bill(&id, input).await {
                     Ok(bill) => warp::reply::json(&bill).into_response(),
                     Err(StoreError::BillNotFound) => return Err(warp::reject::not_found()),
@@ -184,6 +205,112 @@ fn delete_bill(
                     warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT).into_response()
                 }
                 Err(StoreError::BillNotFound) => return Err(warp::reject::not_found()),
+                Err(e) => json_error(store_error_status(&e), e.to_string()),
+            };
+            Ok(response)
+        })
+}
+
+fn list_expenses(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+    warp::path("expenses")
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(internal_auth())
+        .and(store)
+        .and_then(|store: SharedStore| async move {
+            let expenses = store
+                .list_expenses()
+                .await
+                .map_err(|_| warp::reject::not_found())?;
+            Ok::<_, Rejection>(warp::reply::json(&expenses))
+        })
+}
+
+fn get_expense(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+    warp::path!("expenses" / String)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(internal_auth())
+        .and(store)
+        .and_then(|id: String, store: SharedStore| async move {
+            match store
+                .get_expense(&id)
+                .await
+                .map_err(|_| warp::reject::not_found())?
+            {
+                Some(expense) => Ok(warp::reply::json(&expense)),
+                None => Err(warp::reject::not_found()),
+            }
+        })
+}
+
+fn create_expense(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+    warp::path("expenses")
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(internal_auth())
+        .and(store)
+        .and_then(|input: CreateExpense, store: SharedStore| async move {
+            if let Err(e) = crate::orders::validate_order_link(input.order_id.as_deref()).await {
+                return Ok(json_error(store_error_status(&e), e.to_string()));
+            }
+            let response = match store.create_expense(input).await {
+                Ok(expense) => {
+                    warp::reply::with_status(warp::reply::json(&expense), StatusCode::CREATED)
+                        .into_response()
+                }
+                Err(e) => json_error(store_error_status(&e), e.to_string()),
+            };
+            Ok::<_, Rejection>(response)
+        })
+}
+
+fn update_expense(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+    warp::path!("expenses" / String)
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and(internal_auth())
+        .and(store)
+        .and_then(
+            |id: String, input: UpdateExpense, store: SharedStore| async move {
+                if let Err(e) = crate::orders::validate_order_link(input.order_id.as_deref()).await
+                {
+                    return Ok(json_error(store_error_status(&e), e.to_string()));
+                }
+                let response = match store.update_expense(&id, input).await {
+                    Ok(expense) => warp::reply::json(&expense).into_response(),
+                    Err(StoreError::ExpenseNotFound) => return Err(warp::reject::not_found()),
+                    Err(e) => json_error(store_error_status(&e), e.to_string()),
+                };
+                Ok(response)
+            },
+        )
+}
+
+fn delete_expense(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+    warp::path!("expenses" / String)
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(internal_auth())
+        .and(store)
+        .and_then(|id: String, store: SharedStore| async move {
+            let response = match store.delete_expense(&id).await {
+                Ok(()) => {
+                    warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT).into_response()
+                }
+                Err(StoreError::ExpenseNotFound) => return Err(warp::reject::not_found()),
                 Err(e) => json_error(store_error_status(&e), e.to_string()),
             };
             Ok(response)

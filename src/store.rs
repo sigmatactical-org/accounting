@@ -7,8 +7,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{PgPool, Row};
 
 use crate::model::{
-    Bill, BillKind, BillLineItem, CreateBill, CreateIntegration, Integration, UpdateBill,
-    UpdateIntegration, compute_total_cents,
+    Bill, BillKind, BillLineItem, CreateBill, CreateExpense, CreateIntegration, Expense,
+    ExpenseCategory, Integration, UpdateBill, UpdateExpense, UpdateIntegration,
+    compute_total_cents,
 };
 
 #[derive(Debug, Clone)]
@@ -26,7 +27,8 @@ impl AccountingStore {
     pub async fn connect_empty() -> Result<Self, StoreError> {
         let store = Self::connect().await?;
         sqlx::query(
-            "TRUNCATE accounting.bill_line_items, accounting.bills, accounting.integrations",
+            "TRUNCATE accounting.expenses, accounting.bill_line_items, accounting.bills, \
+             accounting.integrations",
         )
         .execute(&store.pool)
         .await?;
@@ -40,8 +42,8 @@ impl AccountingStore {
 
     pub async fn list_bills(&self) -> Result<Vec<Bill>, StoreError> {
         let rows = sqlx::query(
-            "SELECT id, kind, status, vendor, invoice_number, bill_date, due_date, currency, \
-             total_cents, scan_uri, notes, updated_at \
+            "SELECT id, kind, status, vendor, invoice_number, order_id, bill_date, due_date, \
+             currency, total_cents, scan_uri, notes, updated_at \
              FROM accounting.bills ORDER BY bill_date DESC",
         )
         .fetch_all(&self.pool)
@@ -51,8 +53,8 @@ impl AccountingStore {
 
     pub async fn get_bill(&self, id: &str) -> Result<Option<Bill>, StoreError> {
         let row = sqlx::query(
-            "SELECT id, kind, status, vendor, invoice_number, bill_date, due_date, currency, \
-             total_cents, scan_uri, notes, updated_at \
+            "SELECT id, kind, status, vendor, invoice_number, order_id, bill_date, due_date, \
+             currency, total_cents, scan_uri, notes, updated_at \
              FROM accounting.bills WHERE id = $1",
         )
         .bind(id)
@@ -99,14 +101,15 @@ impl AccountingStore {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "UPDATE accounting.bills SET kind = $2, status = $3, vendor = $4, invoice_number = $5, \
-             bill_date = $6, due_date = $7, currency = $8, total_cents = $9, scan_uri = $10, \
-             notes = $11, updated_at = $12 WHERE id = $1",
+             order_id = $6, bill_date = $7, due_date = $8, currency = $9, total_cents = $10, \
+             scan_uri = $11, notes = $12, updated_at = $13 WHERE id = $1",
         )
         .bind(&bill.id)
         .bind(kind_str(bill.kind))
         .bind(bill_status_str(bill.status))
         .bind(&bill.vendor)
         .bind(&bill.invoice_number)
+        .bind(&bill.order_id)
         .bind(parse_date(&bill.bill_date)?)
         .bind(bill.due_date.as_deref().map(parse_date).transpose()?)
         .bind(&bill.currency)
@@ -128,6 +131,141 @@ impl AccountingStore {
             .await?;
         if result.rows_affected() == 0 {
             return Err(StoreError::BillNotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn list_expenses(&self) -> Result<Vec<Expense>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT id, expense_date, category, description, vendor, amount_cents, currency, \
+             receipt_uri, bill_id, order_id, notes, updated_at \
+             FROM accounting.expenses ORDER BY expense_date DESC, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(row_to_expense).collect()
+    }
+
+    pub async fn get_expense(&self, id: &str) -> Result<Option<Expense>, StoreError> {
+        let row = sqlx::query(
+            "SELECT id, expense_date, category, description, vendor, amount_cents, currency, \
+             receipt_uri, bill_id, order_id, notes, updated_at \
+             FROM accounting.expenses WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(row_to_expense).transpose()
+    }
+
+    pub async fn create_expense(&self, input: CreateExpense) -> Result<Expense, StoreError> {
+        self.validate_expense_input(
+            &input.expense_date,
+            &input.description,
+            input.amount_cents,
+            input.bill_id.as_deref(),
+        )
+        .await?;
+        let expense = Expense::new(input);
+        sqlx::query(
+            "INSERT INTO accounting.expenses \
+             (id, expense_date, category, description, vendor, amount_cents, currency, \
+              receipt_uri, bill_id, order_id, notes, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        )
+        .bind(&expense.id)
+        .bind(parse_date(&expense.expense_date)?)
+        .bind(expense_category_str(expense.category))
+        .bind(&expense.description)
+        .bind(&expense.vendor)
+        .bind(expense.amount_cents)
+        .bind(&expense.currency)
+        .bind(&expense.receipt_uri)
+        .bind(&expense.bill_id)
+        .bind(&expense.order_id)
+        .bind(&expense.notes)
+        .bind(parse_ts(&expense.updated_at)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(expense)
+    }
+
+    pub async fn update_expense(
+        &self,
+        id: &str,
+        input: UpdateExpense,
+    ) -> Result<Expense, StoreError> {
+        let mut expense = self
+            .get_expense(id)
+            .await?
+            .ok_or(StoreError::ExpenseNotFound)?;
+        self.validate_expense_input(
+            &input.expense_date,
+            &input.description,
+            input.amount_cents,
+            input.bill_id.as_deref(),
+        )
+        .await?;
+        expense.apply_update(input);
+        sqlx::query(
+            "UPDATE accounting.expenses SET expense_date = $2, category = $3, description = $4, \
+             vendor = $5, amount_cents = $6, currency = $7, receipt_uri = $8, bill_id = $9, \
+             order_id = $10, notes = $11, updated_at = $12 WHERE id = $1",
+        )
+        .bind(&expense.id)
+        .bind(parse_date(&expense.expense_date)?)
+        .bind(expense_category_str(expense.category))
+        .bind(&expense.description)
+        .bind(&expense.vendor)
+        .bind(expense.amount_cents)
+        .bind(&expense.currency)
+        .bind(&expense.receipt_uri)
+        .bind(&expense.bill_id)
+        .bind(&expense.order_id)
+        .bind(&expense.notes)
+        .bind(parse_ts(&expense.updated_at)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(expense)
+    }
+
+    pub async fn delete_expense(&self, id: &str) -> Result<(), StoreError> {
+        let result = sqlx::query("DELETE FROM accounting.expenses WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(StoreError::ExpenseNotFound);
+        }
+        Ok(())
+    }
+
+    async fn validate_expense_input(
+        &self,
+        expense_date: &str,
+        description: &str,
+        amount_cents: i64,
+        bill_id: Option<&str>,
+    ) -> Result<(), StoreError> {
+        if expense_date.trim().is_empty() {
+            return Err(StoreError::ExpenseDateRequired);
+        }
+        parse_date(expense_date)?;
+        if description.trim().is_empty() {
+            return Err(StoreError::ExpenseDescriptionRequired);
+        }
+        if amount_cents < 1 {
+            return Err(StoreError::InvalidAmount);
+        }
+        if let Some(bill_id) = bill_id.map(str::trim).filter(|s| !s.is_empty()) {
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounting.bills WHERE id = $1)")
+                    .bind(bill_id)
+                    .fetch_one(&self.pool)
+                    .await?;
+            if !exists {
+                return Err(StoreError::LinkedBillNotFound);
+            }
         }
         Ok(())
     }
@@ -315,15 +453,16 @@ async fn insert_bill(
 ) -> Result<(), StoreError> {
     sqlx::query(
         "INSERT INTO accounting.bills \
-         (id, kind, status, vendor, invoice_number, bill_date, due_date, currency, total_cents, \
-          scan_uri, notes, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+         (id, kind, status, vendor, invoice_number, order_id, bill_date, due_date, currency, \
+          total_cents, scan_uri, notes, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(&bill.id)
     .bind(kind_str(bill.kind))
     .bind(bill_status_str(bill.status))
     .bind(&bill.vendor)
     .bind(&bill.invoice_number)
+    .bind(&bill.order_id)
     .bind(parse_date(&bill.bill_date)?)
     .bind(bill.due_date.as_deref().map(parse_date).transpose()?)
     .bind(&bill.currency)
@@ -377,6 +516,7 @@ fn row_to_bill(
         status: parse_bill_status(&status_str),
         vendor: row.get("vendor"),
         invoice_number: row.get("invoice_number"),
+        order_id: row.get("order_id"),
         bill_date: bill_date.format("%Y-%m-%d").to_string(),
         due_date: due_date.map(|d| d.format("%Y-%m-%d").to_string()),
         currency: row.get("currency"),
@@ -463,6 +603,49 @@ fn parse_provider(value: &str) -> crate::model::IntegrationProvider {
     }
 }
 
+fn expense_category_str(category: ExpenseCategory) -> &'static str {
+    match category {
+        ExpenseCategory::Materials => "materials",
+        ExpenseCategory::Shipping => "shipping",
+        ExpenseCategory::Tooling => "tooling",
+        ExpenseCategory::Software => "software",
+        ExpenseCategory::Travel => "travel",
+        ExpenseCategory::Fees => "fees",
+        ExpenseCategory::Other => "other",
+    }
+}
+
+fn parse_expense_category(value: &str) -> ExpenseCategory {
+    match value {
+        "materials" => ExpenseCategory::Materials,
+        "shipping" => ExpenseCategory::Shipping,
+        "tooling" => ExpenseCategory::Tooling,
+        "software" => ExpenseCategory::Software,
+        "travel" => ExpenseCategory::Travel,
+        "fees" => ExpenseCategory::Fees,
+        _ => ExpenseCategory::Other,
+    }
+}
+
+fn row_to_expense(row: sqlx::postgres::PgRow) -> Result<Expense, StoreError> {
+    let category_str: String = row.get("category");
+    let expense_date: NaiveDate = row.get("expense_date");
+    Ok(Expense {
+        id: row.get("id"),
+        expense_date: expense_date.format("%Y-%m-%d").to_string(),
+        category: parse_expense_category(&category_str),
+        description: row.get("description"),
+        vendor: row.get("vendor"),
+        amount_cents: row.get("amount_cents"),
+        currency: row.get("currency"),
+        receipt_uri: row.get("receipt_uri"),
+        bill_id: row.get("bill_id"),
+        order_id: row.get("order_id"),
+        notes: row.get("notes"),
+        updated_at: row.get::<DateTime<Utc>, _>("updated_at").to_rfc3339(),
+    })
+}
+
 fn parse_date(value: &str) -> Result<NaiveDate, StoreError> {
     NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
         .map_err(|e| StoreError::InvalidInput(format!("invalid date: {e}")))
@@ -503,6 +686,7 @@ mod tests {
                 status: Some(BillStatus::Draft),
                 vendor: "Acme Corp".to_string(),
                 invoice_number: Some("INV-100".to_string()),
+                order_id: Some("order-42".to_string()),
                 bill_date: "2026-01-15".to_string(),
                 due_date: None,
                 currency: None,
@@ -515,6 +699,9 @@ mod tests {
         assert_eq!(bill.vendor, "Acme Corp");
         assert_eq!(bill.kind, BillKind::Digital);
         assert_eq!(bill.total_cents, 2500);
+        assert_eq!(bill.order_id.as_deref(), Some("order-42"));
+        let fetched = store.get_bill(&bill.id).await.unwrap().unwrap();
+        assert_eq!(fetched.order_id.as_deref(), Some("order-42"));
     }
 
     #[tokio::test]
@@ -526,6 +713,7 @@ mod tests {
                 status: None,
                 vendor: "Vendor".to_string(),
                 invoice_number: None,
+                order_id: None,
                 bill_date: "2026-01-15".to_string(),
                 due_date: None,
                 currency: None,
@@ -536,6 +724,95 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::ScanUriRequired));
+    }
+
+    #[tokio::test]
+    async fn create_expense_roundtrip() {
+        let store = test_store().await;
+        let bill = store
+            .create_bill(CreateBill {
+                kind: BillKind::Digital,
+                status: None,
+                vendor: "Acme Corp".to_string(),
+                invoice_number: None,
+                order_id: None,
+                bill_date: "2026-02-01".to_string(),
+                due_date: None,
+                currency: None,
+                line_items: sample_line_items(),
+                scan_uri: None,
+                notes: None,
+            })
+            .await
+            .unwrap();
+        let expense = store
+            .create_expense(CreateExpense {
+                expense_date: "2026-02-03".to_string(),
+                category: ExpenseCategory::Materials,
+                description: "Aluminum stock".to_string(),
+                vendor: Some("Metal Supply Co".to_string()),
+                amount_cents: 12_50,
+                currency: None,
+                receipt_uri: Some("receipts/2026/alu.pdf".to_string()),
+                bill_id: Some(bill.id.clone()),
+                order_id: Some("order-9".to_string()),
+                notes: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(expense.category, ExpenseCategory::Materials);
+        assert_eq!(expense.currency, "USD");
+        // Compare all but updated_at: Postgres stores microseconds, the
+        // in-memory timestamp has nanoseconds.
+        let fetched = store.get_expense(&expense.id).await.unwrap().unwrap();
+        let expense = Expense {
+            updated_at: fetched.updated_at.clone(),
+            ..expense
+        };
+        assert_eq!(fetched, expense);
+        let listed = store.list_expenses().await.unwrap();
+        assert_eq!(listed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_expense_rejects_bad_input() {
+        let store = test_store().await;
+        let base = CreateExpense {
+            expense_date: "2026-02-03".to_string(),
+            category: ExpenseCategory::Other,
+            description: "Misc".to_string(),
+            vendor: None,
+            amount_cents: 100,
+            currency: None,
+            receipt_uri: None,
+            bill_id: None,
+            order_id: None,
+            notes: None,
+        };
+        let err = store
+            .create_expense(CreateExpense {
+                amount_cents: 0,
+                ..base.clone()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidAmount));
+        let err = store
+            .create_expense(CreateExpense {
+                description: "  ".to_string(),
+                ..base.clone()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::ExpenseDescriptionRequired));
+        let err = store
+            .create_expense(CreateExpense {
+                bill_id: Some("no-such-bill".to_string()),
+                ..base
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::LinkedBillNotFound));
     }
 
     #[tokio::test]

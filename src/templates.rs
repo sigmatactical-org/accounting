@@ -2,6 +2,10 @@ mod bill_form_template;
 mod bill_form_values;
 mod bill_row;
 mod catalog_sku_ref;
+mod category_option;
+mod expense_form_template;
+mod expense_form_values;
+mod expense_row;
 mod index_template;
 mod integration_form_template;
 mod integration_form_values;
@@ -10,6 +14,10 @@ pub(crate) use bill_form_template::BillFormTemplate;
 pub use bill_form_values::BillFormValues;
 pub use bill_row::BillRow;
 pub use catalog_sku_ref::CatalogSkuRef;
+pub(crate) use category_option::CategoryOption;
+pub(crate) use expense_form_template::ExpenseFormTemplate;
+pub use expense_form_values::ExpenseFormValues;
+pub use expense_row::ExpenseRow;
 pub(crate) use index_template::IndexTemplate;
 pub(crate) use integration_form_template::IntegrationFormTemplate;
 pub use integration_form_values::IntegrationFormValues;
@@ -19,14 +27,15 @@ use askama::Template;
 
 use crate::catalog::CatalogSku;
 use crate::model::{
-    Bill, BillKind, BillStatus, Integration, IntegrationProvider, format_line_items_text,
+    Bill, BillKind, BillStatus, Expense, ExpenseCategory, Integration, IntegrationProvider,
+    format_line_items_text,
 };
 use sigma_theme::copyright_years;
-use sigma_theme::nav::SiteHeader;
+use sigma_theme::nav::{SiteHeader, site_menu};
 use sigma_theme::site_nav::{AppSiteNav, render_app_site_nav};
 
-fn page_header(brand: &str) -> SiteHeader {
-    SiteHeader::new(brand)
+fn page_header() -> SiteHeader {
+    SiteHeader::new().with_menu(site_menu(None))
 }
 
 fn site_nav(return_path: &str) -> Result<String, askama::Error> {
@@ -44,6 +53,7 @@ fn site_nav(return_path: &str) -> Result<String, askama::Error> {
 }
 
 fn bill_rows(bills: Vec<Bill>) -> Vec<BillRow> {
+    let orders_public_base = crate::config::orders_public_base_url();
     bills
         .into_iter()
         .map(|bill| {
@@ -58,14 +68,112 @@ fn bill_rows(bills: Vec<Bill>) -> Vec<BillRow> {
                 BillStatus::Void => "Void".to_string(),
             };
             let total_display = format_amount(bill.total_cents, &bill.currency);
+            let order_href = match (&orders_public_base, &bill.order_id) {
+                (Some(base), Some(order_id)) => Some(format!("{base}admin/orders/{order_id}")),
+                _ => None,
+            };
             BillRow {
                 bill,
                 kind_label,
                 status_label,
                 total_display,
+                order_href,
             }
         })
         .collect()
+}
+
+fn expense_category_label(category: ExpenseCategory) -> &'static str {
+    match category {
+        ExpenseCategory::Materials => "Materials",
+        ExpenseCategory::Shipping => "Shipping",
+        ExpenseCategory::Tooling => "Tooling",
+        ExpenseCategory::Software => "Software",
+        ExpenseCategory::Travel => "Travel",
+        ExpenseCategory::Fees => "Fees",
+        ExpenseCategory::Other => "Other",
+    }
+}
+
+fn expense_category_value(category: ExpenseCategory) -> &'static str {
+    match category {
+        ExpenseCategory::Materials => "materials",
+        ExpenseCategory::Shipping => "shipping",
+        ExpenseCategory::Tooling => "tooling",
+        ExpenseCategory::Software => "software",
+        ExpenseCategory::Travel => "travel",
+        ExpenseCategory::Fees => "fees",
+        ExpenseCategory::Other => "other",
+    }
+}
+
+const EXPENSE_CATEGORIES: [ExpenseCategory; 7] = [
+    ExpenseCategory::Materials,
+    ExpenseCategory::Shipping,
+    ExpenseCategory::Tooling,
+    ExpenseCategory::Software,
+    ExpenseCategory::Travel,
+    ExpenseCategory::Fees,
+    ExpenseCategory::Other,
+];
+
+fn category_options(selected: &str) -> Vec<CategoryOption> {
+    EXPENSE_CATEGORIES
+        .into_iter()
+        .map(|category| {
+            let value = expense_category_value(category);
+            CategoryOption {
+                value,
+                label: expense_category_label(category),
+                selected: value == selected,
+            }
+        })
+        .collect()
+}
+
+fn expense_rows(expenses: Vec<Expense>) -> Vec<ExpenseRow> {
+    let orders_public_base = crate::config::orders_public_base_url();
+    expenses
+        .into_iter()
+        .map(|expense| {
+            let category_label = expense_category_label(expense.category).to_string();
+            let amount_display = format_amount(expense.amount_cents, &expense.currency);
+            let order_href = match (&orders_public_base, &expense.order_id) {
+                (Some(base), Some(order_id)) => Some(format!("{base}admin/orders/{order_id}")),
+                _ => None,
+            };
+            ExpenseRow {
+                expense,
+                category_label,
+                amount_display,
+                order_href,
+            }
+        })
+        .collect()
+}
+
+/// Sum of listed expenses per currency, e.g. `USD 12.50 + EUR 3.00`.
+fn expense_total_display(expenses: &[ExpenseRow]) -> Option<String> {
+    let mut totals: Vec<(String, i64)> = Vec::new();
+    for row in expenses {
+        match totals
+            .iter_mut()
+            .find(|(currency, _)| *currency == row.expense.currency)
+        {
+            Some((_, total)) => *total += row.expense.amount_cents,
+            None => totals.push((row.expense.currency.clone(), row.expense.amount_cents)),
+        }
+    }
+    if totals.is_empty() {
+        return None;
+    }
+    Some(
+        totals
+            .iter()
+            .map(|(currency, total)| format_amount(*total, currency))
+            .collect::<Vec<_>>()
+            .join(" + "),
+    )
 }
 
 fn integration_rows(integrations: Vec<Integration>) -> Vec<IntegrationRow> {
@@ -114,6 +222,7 @@ fn values_from_bill(bill: &Bill) -> BillFormValues {
         },
         vendor: bill.vendor.clone(),
         invoice_number: bill.invoice_number.clone().unwrap_or_default(),
+        order_id: bill.order_id.clone().unwrap_or_default(),
         bill_date: bill.bill_date.clone(),
         due_date: bill.due_date.clone().unwrap_or_default(),
         currency: bill.currency.clone(),
@@ -129,11 +238,42 @@ fn default_bill_form_values() -> BillFormValues {
         status: "draft".to_string(),
         vendor: String::new(),
         invoice_number: String::new(),
+        order_id: String::new(),
         bill_date: String::new(),
         due_date: String::new(),
         currency: "USD".to_string(),
         line_items: String::new(),
         scan_uri: String::new(),
+        notes: String::new(),
+    }
+}
+
+fn values_from_expense(expense: &Expense) -> ExpenseFormValues {
+    ExpenseFormValues {
+        expense_date: expense.expense_date.clone(),
+        category: expense_category_value(expense.category).to_string(),
+        description: expense.description.clone(),
+        vendor: expense.vendor.clone().unwrap_or_default(),
+        amount_cents: expense.amount_cents.to_string(),
+        currency: expense.currency.clone(),
+        receipt_uri: expense.receipt_uri.clone().unwrap_or_default(),
+        bill_id: expense.bill_id.clone().unwrap_or_default(),
+        order_id: expense.order_id.clone().unwrap_or_default(),
+        notes: expense.notes.clone().unwrap_or_default(),
+    }
+}
+
+fn default_expense_form_values() -> ExpenseFormValues {
+    ExpenseFormValues {
+        expense_date: String::new(),
+        category: "other".to_string(),
+        description: String::new(),
+        vendor: String::new(),
+        amount_cents: String::new(),
+        currency: "USD".to_string(),
+        receipt_uri: String::new(),
+        bill_id: String::new(),
+        order_id: String::new(),
         notes: String::new(),
     }
 }
@@ -186,6 +326,7 @@ fn render_bill_form(
         status_void: status == "void",
         vendor: values.vendor,
         invoice_number: values.invoice_number,
+        order_id: values.order_id,
         bill_date: values.bill_date,
         due_date: values.due_date,
         currency: values.currency,
@@ -194,7 +335,37 @@ fn render_bill_form(
         notes: values.notes,
         catalog_skus: catalog_sku_refs(catalog_skus),
         error,
-        site_header: page_header("Sigma Accounting"),
+        site_header: page_header(),
+        site_nav: site_nav(&return_path)?,
+        copyright_years: copyright_years(),
+    }
+    .render()
+}
+
+fn render_expense_form(
+    expense: Option<Expense>,
+    error: Option<String>,
+    values: ExpenseFormValues,
+) -> Result<String, askama::Error> {
+    let category = values.category.to_lowercase();
+    let return_path = expense
+        .as_ref()
+        .map(|entry| format!("/expenses/{}/edit", entry.id))
+        .unwrap_or_else(|| "/expenses/new".to_string());
+    ExpenseFormTemplate {
+        expense,
+        expense_date: values.expense_date,
+        category_options: category_options(&category),
+        description: values.description,
+        vendor: values.vendor,
+        amount_cents: values.amount_cents,
+        currency: values.currency,
+        receipt_uri: values.receipt_uri,
+        bill_id: values.bill_id,
+        order_id: values.order_id,
+        notes: values.notes,
+        error,
+        site_header: page_header(),
         site_nav: site_nav(&return_path)?,
         copyright_years: copyright_years(),
     }
@@ -222,7 +393,7 @@ fn render_integration_form(
         webhook_url: values.webhook_url,
         notes: values.notes,
         error,
-        site_header: page_header("Sigma Accounting"),
+        site_header: page_header(),
         site_nav: site_nav(&return_path)?,
         copyright_years: copyright_years(),
     }
@@ -234,19 +405,24 @@ fn render_integration_form(
 /// Returns [`askama::Error`] when template rendering fails.
 pub fn render_index_html(
     bills: Vec<Bill>,
+    expenses: Vec<Expense>,
     integrations: Vec<Integration>,
     catalog_skus: Vec<CatalogSku>,
     catalog_notice: Option<String>,
     message: Option<String>,
 ) -> Result<String, askama::Error> {
+    let expenses = expense_rows(expenses);
+    let expense_total = expense_total_display(&expenses);
     IndexTemplate {
         bills: bill_rows(bills),
+        expenses,
+        expense_total,
         integrations: integration_rows(integrations),
         catalog_skus: catalog_sku_refs(catalog_skus),
         catalog_notice,
         catalog_configured: crate::config::catalog_configured(),
         message,
-        site_header: page_header("Sigma Accounting"),
+        site_header: page_header(),
         site_nav: site_nav("/")?,
         copyright_years: copyright_years(),
     }
@@ -278,6 +454,31 @@ pub fn render_bill_form_html_with_values(
     values: BillFormValues,
 ) -> Result<String, askama::Error> {
     render_bill_form(catalog_skus, bill, error, values)
+}
+
+/// # Errors
+///
+/// Returns [`askama::Error`] when template rendering fails.
+pub fn render_expense_form_html(
+    expense: Option<Expense>,
+    error: Option<String>,
+) -> Result<String, askama::Error> {
+    let values = expense
+        .as_ref()
+        .map(values_from_expense)
+        .unwrap_or_else(default_expense_form_values);
+    render_expense_form(expense, error, values)
+}
+
+/// # Errors
+///
+/// Returns [`askama::Error`] when template rendering fails.
+pub fn render_expense_form_html_with_values(
+    expense: Option<Expense>,
+    error: Option<String>,
+    values: ExpenseFormValues,
+) -> Result<String, askama::Error> {
+    render_expense_form(expense, error, values)
 }
 
 /// # Errors

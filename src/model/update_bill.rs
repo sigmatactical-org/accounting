@@ -10,6 +10,8 @@ pub struct UpdateBill {
     pub status: BillStatus,
     pub vendor: String,
     pub invoice_number: Option<String>,
+    #[serde(default)]
+    pub order_id: Option<String>,
     pub bill_date: String,
     pub due_date: Option<String>,
     pub currency: String,

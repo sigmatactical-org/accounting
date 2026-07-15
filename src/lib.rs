@@ -6,6 +6,7 @@ mod api;
 pub mod catalog;
 pub mod config;
 mod model;
+pub mod orders;
 pub mod store;
 mod templates;
 mod web;
@@ -17,8 +18,9 @@ use warp::Filter;
 use warp::Reply;
 
 pub use model::{
-    Bill, BillKind, BillLineItem, BillStatus, CreateBill, CreateIntegration, Integration,
-    IntegrationProvider, UpdateBill, UpdateIntegration,
+    Bill, BillKind, BillLineItem, BillStatus, CreateBill, CreateExpense, CreateIntegration,
+    Expense, ExpenseCategory, Integration, IntegrationProvider, UpdateBill, UpdateExpense,
+    UpdateIntegration,
 };
 
 /// Shared accounting store handle (`PgPool` is internally concurrent).
@@ -137,7 +139,7 @@ mod tests {
             .header("content-type", "application/json")
             .header("x-sigma-internal-token", sigma_pg::clients::internal::TEST_INTERNAL_TOKEN)
             .body(
-                r#"{"kind":"digital","vendor":"Acme Corp","invoice_number":"INV-1","bill_date":"2026-01-15","line_items":[{"description":"Supplies","quantity":1,"unit_price_cents":2500}]}"#,
+                r#"{"kind":"digital","vendor":"Acme Corp","invoice_number":"INV-1","order_id":"order-7","bill_date":"2026-01-15","line_items":[{"description":"Supplies","quantity":1,"unit_price_cents":2500}]}"#,
             )
             .reply(&routes(test_store().await))
             .await;
@@ -146,6 +148,49 @@ mod tests {
         assert_eq!(bill.vendor, "Acme Corp");
         assert_eq!(bill.kind, BillKind::Digital);
         assert_eq!(bill.total_cents, 2500);
+        assert_eq!(bill.order_id.as_deref(), Some("order-7"));
+    }
+
+    #[tokio::test]
+    async fn api_create_expense() {
+        let res = warp::test::request()
+            .method("POST")
+            .path("/expenses")
+            .header("content-type", "application/json")
+            .header(
+                "x-sigma-internal-token",
+                sigma_pg::clients::internal::TEST_INTERNAL_TOKEN,
+            )
+            .body(
+                r#"{"expense_date":"2026-02-03","category":"materials","description":"Aluminum stock","vendor":"Metal Supply Co","amount_cents":1250,"order_id":"order-9"}"#,
+            )
+            .reply(&routes(test_store().await))
+            .await;
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let expense: Expense = serde_json::from_slice(res.body()).unwrap();
+        assert_eq!(expense.category, ExpenseCategory::Materials);
+        assert_eq!(expense.amount_cents, 1250);
+        assert_eq!(expense.order_id.as_deref(), Some("order-9"));
+    }
+
+    #[tokio::test]
+    async fn api_create_expense_rejects_unknown_bill_link() {
+        let res = warp::test::request()
+            .method("POST")
+            .path("/expenses")
+            .header("content-type", "application/json")
+            .header(
+                "x-sigma-internal-token",
+                sigma_pg::clients::internal::TEST_INTERNAL_TOKEN,
+            )
+            .body(
+                r#"{"expense_date":"2026-02-03","category":"fees","description":"Card fee","amount_cents":95,"bill_id":"no-such-bill"}"#,
+            )
+            .reply(&routes(test_store().await))
+            .await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let body = std::str::from_utf8(res.body()).unwrap();
+        assert!(body.contains("linked bill not found"));
     }
 
     #[tokio::test]

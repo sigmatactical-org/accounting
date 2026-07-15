@@ -18,6 +18,7 @@ pub(crate) struct BillFormTemplate {
     pub(crate) status_void: bool,
     pub(crate) vendor: String,
     pub(crate) invoice_number: String,
+    pub(crate) order_id: String,
     pub(crate) bill_date: String,
     pub(crate) due_date: String,
     pub(crate) currency: String,

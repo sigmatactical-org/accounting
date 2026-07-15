@@ -4,11 +4,16 @@ mod bill_kind;
 mod bill_line_item;
 mod bill_status;
 mod create_bill;
+mod create_expense;
 mod create_integration;
+mod expense;
+mod expense_category;
+mod expense_form;
 mod integration;
 mod integration_form;
 mod integration_provider;
 mod update_bill;
+mod update_expense;
 mod update_integration;
 pub use bill::Bill;
 pub use bill_form::BillForm;
@@ -16,11 +21,16 @@ pub use bill_kind::BillKind;
 pub use bill_line_item::BillLineItem;
 pub use bill_status::BillStatus;
 pub use create_bill::CreateBill;
+pub use create_expense::CreateExpense;
 pub use create_integration::CreateIntegration;
+pub use expense::Expense;
+pub use expense_category::ExpenseCategory;
+pub use expense_form::ExpenseForm;
 pub use integration::Integration;
 pub use integration_form::IntegrationForm;
 pub use integration_provider::IntegrationProvider;
 pub use update_bill::UpdateBill;
+pub use update_expense::UpdateExpense;
 pub use update_integration::UpdateIntegration;
 
 fn default_currency() -> String {
@@ -60,6 +70,19 @@ fn parse_bill_status(value: &str) -> Result<BillStatus, String> {
         "paid" => Ok(BillStatus::Paid),
         "void" => Ok(BillStatus::Void),
         other => Err(format!("invalid bill status: {other}")),
+    }
+}
+
+fn parse_expense_category(value: &str) -> Result<ExpenseCategory, String> {
+    match value.trim().to_lowercase().as_str() {
+        "materials" => Ok(ExpenseCategory::Materials),
+        "shipping" => Ok(ExpenseCategory::Shipping),
+        "tooling" => Ok(ExpenseCategory::Tooling),
+        "software" => Ok(ExpenseCategory::Software),
+        "travel" => Ok(ExpenseCategory::Travel),
+        "fees" => Ok(ExpenseCategory::Fees),
+        "other" => Ok(ExpenseCategory::Other),
+        other => Err(format!("invalid expense category: {other}")),
     }
 }
 

@@ -12,6 +12,8 @@ pub struct Bill {
     pub vendor: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invoice_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<String>,
     pub bill_date: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub due_date: Option<String>,
@@ -37,6 +39,7 @@ impl Bill {
             status: input.status.unwrap_or(BillStatus::Draft),
             vendor: input.vendor.trim().to_string(),
             invoice_number: input.invoice_number.map(|s| s.trim().to_string()),
+            order_id: normalize_order_id(input.order_id),
             bill_date: input.bill_date.trim().to_string(),
             due_date: input.due_date.map(|s| s.trim().to_string()),
             currency: input
@@ -58,6 +61,7 @@ impl Bill {
         self.status = input.status;
         self.vendor = input.vendor.trim().to_string();
         self.invoice_number = input.invoice_number.map(|s| s.trim().to_string());
+        self.order_id = normalize_order_id(input.order_id);
         self.bill_date = input.bill_date.trim().to_string();
         self.due_date = input.due_date.map(|s| s.trim().to_string());
         self.currency = normalize_currency(input.currency);
@@ -67,4 +71,10 @@ impl Bill {
         self.notes = input.notes.map(|s| s.trim().to_string());
         self.updated_at = chrono::Utc::now().to_rfc3339();
     }
+}
+
+fn normalize_order_id(order_id: Option<String>) -> Option<String> {
+    order_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }

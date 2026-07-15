@@ -10,10 +10,11 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <h1 class="mb-1">Accounting</h1>
-      <p class="text-secondary mb-0">Scanned and digital bills, integrations, and catalog-linked line items.</p>
+      <p class="text-secondary mb-0">Scanned and digital bills, expense tracking, integrations, and catalog-linked line items.</p>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-primary" href="/integrations/new">Add integration</a>
+      <a class="btn btn-outline-primary" href="/expenses/new">Add expense</a>
       <a class="btn btn-primary" href="/bills/new">Add bill</a>
     </div>
   </div>
@@ -40,6 +41,7 @@
           <tr>
             <th>Vendor</th>
             <th>Invoice</th>
+            <th>Order</th>
             <th>Kind</th>
             <th>Status</th>
             <th>Date</th>
@@ -53,6 +55,7 @@
           <tr>
             <td>{{ row.bill.vendor }}</td>
             <td>{% if let Some(inv) = row.bill.invoice_number.as_ref() %}<code>{{ inv }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td>{% if let Some(oid) = row.bill.order_id.as_ref() %}{% if let Some(href) = row.order_href.as_ref() %}<a href="{{ href }}"><code>{{ oid }}</code></a>{% else %}<code>{{ oid }}</code>{% endif %}{% else %}<span class="text-secondary">—</span>{% endif %}</td>
             <td>{{ row.kind_label }}</td>
             <td>{{ row.status_label }}</td>
             <td>{{ row.bill.bill_date }}</td>
@@ -61,6 +64,55 @@
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="/bills/{{ row.bill.id }}/edit">Edit</a>
               <form method="post" action="/bills/{{ row.bill.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this bill?');">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="mb-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h4 mb-0">Expenses</h2>
+      {% if let Some(total) = expense_total %}
+      <span class="text-secondary">Total: <strong>{{ total }}</strong></span>
+      {% endif %}
+    </div>
+
+    {% if expenses.is_empty() %}
+    <p class="text-secondary">No expenses yet. Track materials, shipping, tooling, and other spend.</p>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Vendor</th>
+            <th>Amount</th>
+            <th>Bill</th>
+            <th>Order</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in expenses %}
+          <tr>
+            <td>{{ row.expense.expense_date }}</td>
+            <td>{{ row.category_label }}</td>
+            <td>{{ row.expense.description }}</td>
+            <td>{% if let Some(vendor) = row.expense.vendor.as_ref() %}{{ vendor }}{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td>{{ row.amount_display }}</td>
+            <td>{% if let Some(bid) = row.expense.bill_id.as_ref() %}<a href="/bills/{{ bid }}/edit"><code>{{ bid }}</code></a>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td>{% if let Some(oid) = row.expense.order_id.as_ref() %}{% if let Some(href) = row.order_href.as_ref() %}<a href="{{ href }}"><code>{{ oid }}</code></a>{% else %}<code>{{ oid }}</code>{% endif %}{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="/expenses/{{ row.expense.id }}/edit">Edit</a>
+              <form method="post" action="/expenses/{{ row.expense.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this expense?');">
                 <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
               </form>
             </td>
@@ -135,6 +187,7 @@
     <h2 class="h5">JSON API</h2>
     <ul class="small text-secondary">
       <li><code>GET /bills</code>, <code>POST /bills</code>, <code>GET /bills/{id}</code>, <code>PUT /bills/{id}</code>, <code>DELETE /bills/{id}</code></li>
+      <li><code>GET /expenses</code>, <code>POST /expenses</code>, <code>GET /expenses/{id}</code>, <code>PUT /expenses/{id}</code>, <code>DELETE /expenses/{id}</code></li>
       <li><code>GET /integrations</code>, <code>POST /integrations</code>, <code>GET /integrations/{id}</code>, <code>PUT /integrations/{id}</code>, <code>DELETE /integrations/{id}</code></li>
       <li><code>GET /catalog/skus</code> — proxy to sigma-catalog (requires <code>ACCOUNTING_CATALOG_BASE_URL</code>)</li>
     </ul>
