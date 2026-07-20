@@ -1,509 +1,343 @@
-use std::convert::Infallible;
+//! HTML UI: the index page plus the new/create/edit/update/delete form
+//! routes for bills, expenses, and integrations, all built from
+//! [`CrudFormRoutes`].
 
-use warp::http::StatusCode;
+mod crud_form_routes;
+use crud_form_routes::CrudFormRoutes;
+
+use std::convert::Infallible;
+use std::sync::Arc;
+
+use crate::store::StoreError;
+use warp::http::{StatusCode, Uri};
+use warp::reply::Response;
 use warp::{Filter, Rejection, Reply};
 
 use crate::SharedStore;
 use crate::catalog::{self, CatalogSku};
-use crate::model::{BillForm, ExpenseForm, IntegrationForm};
-use crate::store::StoreError;
+use crate::model::{
+    Bill, BillForm, CreateBill, CreateExpense, Expense, ExpenseForm, Integration, IntegrationForm,
+    UpdateBill, UpdateExpense,
+};
 use crate::templates::{self, BillFormValues, ExpenseFormValues, IntegrationFormValues};
+
+/// Catalog SKUs plus a banner when the catalog service is unreachable.
+type CatalogSkus = (Arc<Vec<CatalogSku>>, Option<String>);
 
 /// Build this module's routes.
 pub fn routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
     index_page(store.clone())
-        .or(new_bill_page(store.clone()))
-        .or(create_bill_form(store.clone()))
-        .or(edit_bill_page(store.clone()))
-        .or(update_bill_form(store.clone()))
-        .or(delete_bill_form(store.clone()))
-        .or(new_expense_page(store.clone()))
-        .or(create_expense_form(store.clone()))
-        .or(edit_expense_page(store.clone()))
-        .or(update_expense_form(store.clone()))
-        .or(delete_expense_form(store.clone()))
-        .or(new_integration_page(store.clone()))
-        .or(create_integration_form(store.clone()))
-        .or(edit_integration_page(store.clone()))
-        .or(update_integration_form(store.clone()))
-        .or(delete_integration_form(store))
+        .or(bill_form_routes(store.clone()))
+        .unify()
+        .or(expense_form_routes(store.clone()))
+        .unify()
+        .or(receipt_routes(store.clone()))
+        .unify()
+        .or(integration_form_routes(store))
+        .unify()
 }
 
-async fn fetch_catalog_skus() -> (Vec<CatalogSku>, Option<String>) {
+/// Receipts are recorded by the cart and by reconcile, never typed in by
+/// hand, so there is no create/edit form — only the reconcile action and a
+/// delete escape hatch.
+fn receipt_routes(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
+    reconcile_receipts_form(store.clone())
+        .or(delete_receipt_form(store))
+        .unify()
+}
+
+/// `POST /receipts/reconcile` — sweep the payments charge log into receipts.
+fn reconcile_receipts_form(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
+    warp::path!("receipts" / "reconcile")
+        .and(warp::post())
+        .and(store)
+        .and_then(|store: SharedStore| async move {
+            let message = match crate::payments::reconcile_receipts(&store).await {
+                Ok(outcome) => format!(
+                    "Reconcile: {} successful charge(s) seen, {} new receipt(s) recorded, \
+                     {} already recorded.",
+                    outcome.charges_seen, outcome.created, outcome.already_recorded
+                ),
+                Err(e) => format!("Reconcile failed: {e}"),
+            };
+            render_index(&store, Some(message)).await
+        })
+}
+
+fn delete_receipt_form(
+    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
+    warp::path!("receipts" / String / "delete")
+        .and(warp::post())
+        .and(store)
+        .and_then(|id: String, store: SharedStore| async move {
+            match store.delete_receipt(&id).await {
+                Ok(()) => Ok(redirect_to_index()),
+                Err(e) if e.is_not_found() => Err(warp::reject::not_found()),
+                Err(e) => render_index(&store, Some(format!("Delete failed: {e}"))).await,
+            }
+        })
+}
+
+/// Catalog SKUs for a page render. The shared client caches per process with
+/// a short TTL, so this is usually a cache hit rather than an HTTP call. A
+/// missing configuration is normal (no catalog links); an unreachable
+/// catalog shows a banner.
+async fn fetch_catalog_skus() -> CatalogSkus {
     match catalog::fetch_skus().await {
         Ok(skus) => (skus, None),
-        Err(catalog::CatalogError::NotConfigured) => (Vec::new(), None),
-        Err(e) => (Vec::new(), Some(format!("Catalog unavailable: {e}"))),
+        Err(catalog::CatalogError::NotConfigured) => (Arc::new(Vec::new()), None),
+        Err(e) => (
+            Arc::new(Vec::new()),
+            Some(format!("Catalog unavailable: {e}")),
+        ),
     }
 }
 
 fn index_page(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
     warp::path::end()
         .and(warp::get())
         .and(store)
-        .and_then(|store: SharedStore| async move {
-            let bills = store
-                .list_bills()
-                .await
-                .map_err(|_| warp::reject::not_found())?;
-            let expenses = store
-                .list_expenses()
-                .await
-                .map_err(|_| warp::reject::not_found())?;
-            let integrations = store
-                .list_integrations()
-                .await
-                .map_err(|_| warp::reject::not_found())?;
-            let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
-            templates::render_index_html(
-                bills,
-                expenses,
-                integrations,
-                catalog_skus,
-                catalog_notice,
-                None,
-            )
-            .map(warp::reply::html)
-            .map_err(|_| warp::reject::not_found())
-        })
+        .and_then(|store: SharedStore| async move { render_index(&store, None).await })
 }
 
-/// Re-render the index with an error message (delete-failure fallback).
-async fn render_index_with_message(
-    store: &SharedStore,
-    message: String,
-) -> Result<warp::reply::Response, Rejection> {
+/// Render the index, optionally with a status message (delete-failure
+/// fallback).
+async fn render_index(store: &SharedStore, message: Option<String>) -> Result<Response, Rejection> {
     let (catalog_skus, catalog_notice) = fetch_catalog_skus().await;
-    let bills = store
-        .list_bills()
-        .await
-        .map_err(|_| warp::reject::not_found())?;
-    let expenses = store
-        .list_expenses()
-        .await
-        .map_err(|_| warp::reject::not_found())?;
-    let integrations = store
-        .list_integrations()
-        .await
-        .map_err(|_| warp::reject::not_found())?;
-    templates::render_index_html(
+    let bills = store.list_bills().await.map_err(page_rejection)?;
+    let expenses = store.list_expenses().await.map_err(page_rejection)?;
+    let receipts = store.list_receipts().await.map_err(page_rejection)?;
+    let integrations = store.list_integrations().await.map_err(page_rejection)?;
+    html_page(templates::render_index_html(
         bills,
         expenses,
+        receipts,
         integrations,
-        catalog_skus,
+        &catalog_skus,
         catalog_notice,
-        Some(message),
-    )
-    .map(|html| warp::reply::html(html).into_response())
-    .map_err(|_| warp::reject::not_found())
+        message,
+    ))
 }
 
-fn new_bill_page(
+fn bill_form_routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path("bills")
-        .and(warp::path("new"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(store)
-        .and_then(|_store: SharedStore| async move {
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
+    CrudFormRoutes {
+        segment: "bills",
+        new_page: || async {
             let (catalog_skus, _) = fetch_catalog_skus().await;
-            templates::render_bill_form_html(catalog_skus, None, None)
-                .map(warp::reply::html)
-                .map_err(|_| warp::reject::not_found())
-        })
-}
-
-fn create_bill_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path("bills")
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::body::form())
-        .and(store)
-        .and_then(|form: BillForm, store: SharedStore| async move {
-            let values = bill_form_to_values(&form);
-            let (catalog_skus, _) = fetch_catalog_skus().await;
-            let response = match form.into_create() {
-                Ok(input) => {
-                    match crate::orders::validate_order_link(input.order_id.as_deref()).await {
-                        Ok(()) => match store.create_bill(input).await {
-                            Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
-                                .into_response(),
-                            Err(e) => render_bill_form_error(catalog_skus, None, values, e),
-                        },
-                        Err(e) => render_bill_form_error(catalog_skus, None, values, e),
-                    }
+            html_page(templates::render_bill_form_html(&catalog_skus, None, None))
+        },
+        create: |store: SharedStore, form: BillForm| async move {
+            match form.into_create() {
+                Ok(input) => match create_bill(&store, input).await {
+                    Ok(()) => Ok(redirect_to_index()),
+                    Err(e) => Ok(bill_form_error(None, None, &e.to_string()).await),
+                },
+                Err((message, form)) => {
+                    Ok(bill_form_error(None, Some(form.into()), &message).await)
                 }
-                Err(e) => render_bill_form_error(catalog_skus, None, values, invalid_input(e)),
-            };
-            Ok::<_, Rejection>(response)
-        })
-}
-
-fn edit_bill_page(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("bills" / String / "edit")
-        .and(warp::get())
-        .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
-            let Some(bill) = store
-                .get_bill(&id)
-                .await
-                .map_err(|_| warp::reject::not_found())?
-            else {
-                return Err(warp::reject::not_found());
-            };
+            }
+        },
+        edit_page: |store: SharedStore, id: String| async move {
+            let bill = fetch_or_404(store.get_bill(&id).await)?;
             let (catalog_skus, _) = fetch_catalog_skus().await;
-            templates::render_bill_form_html(catalog_skus, Some(bill), None)
-                .map(warp::reply::html)
-                .map_err(|_| warp::reject::not_found())
-        })
-}
-
-fn update_bill_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("bills" / String / "edit")
-        .and(warp::post())
-        .and(warp::body::form())
-        .and(store)
-        .and_then(
-            |id: String, form: BillForm, store: SharedStore| async move {
-                let values = bill_form_to_values(&form);
-                let (catalog_skus, _) = fetch_catalog_skus().await;
-                let response = match form.into_update() {
-                    Ok(input) => {
-                        let order_check =
-                            crate::orders::validate_order_link(input.order_id.as_deref()).await;
-                        match order_check {
-                            Ok(()) => match store.update_bill(&id, input).await {
-                                Ok(_) => {
-                                    warp::redirect::redirect(warp::http::Uri::from_static("/"))
-                                        .into_response()
-                                }
-                                Err(e) => {
-                                    let bill = store.get_bill(&id).await.ok().flatten();
-                                    render_bill_form_error(catalog_skus, bill, values, e)
-                                }
-                            },
-                            Err(e) => {
-                                let bill = store.get_bill(&id).await.ok().flatten();
-                                render_bill_form_error(catalog_skus, bill, values, e)
-                            }
-                        }
-                    }
+            html_page(templates::render_bill_form_html(
+                &catalog_skus,
+                Some(bill),
+                None,
+            ))
+        },
+        update: |store: SharedStore, id: String, form: BillForm| async move {
+            match form.into_update() {
+                Ok(input) => match update_bill(&store, &id, input).await {
+                    Ok(()) => Ok(redirect_to_index()),
                     Err(e) => {
                         let bill = store.get_bill(&id).await.ok().flatten();
-                        render_bill_form_error(catalog_skus, bill, values, invalid_input(e))
+                        Ok(bill_form_error(bill, None, &e.to_string()).await)
                     }
-                };
-                Ok::<_, Rejection>(response)
-            },
-        )
-}
-
-fn delete_bill_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("bills" / String / "delete")
-        .and(warp::post())
-        .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
-            match store.delete_bill(&id).await {
-                Ok(()) => {
-                    Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())
+                },
+                Err((message, form)) => {
+                    let bill = store.get_bill(&id).await.ok().flatten();
+                    Ok(bill_form_error(bill, Some(form.into()), &message).await)
                 }
-                Err(StoreError::BillNotFound) => Err(warp::reject::not_found()),
-                Err(e) => render_index_with_message(&store, format!("Delete failed: {e}")).await,
             }
-        })
+        },
+        delete: |store: SharedStore, id: String| async move {
+            delete_or_message(&store, store.delete_bill(&id).await).await
+        },
+    }
+    .build::<BillForm, _, _>(store)
 }
 
-fn new_expense_page(
+fn expense_form_routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path("expenses")
-        .and(warp::path("new"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(store)
-        .and_then(|_store: SharedStore| async move {
-            templates::render_expense_form_html(None, None)
-                .map(warp::reply::html)
-                .map_err(|_| warp::reject::not_found())
-        })
-}
-
-fn create_expense_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path("expenses")
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::body::form())
-        .and(store)
-        .and_then(|form: ExpenseForm, store: SharedStore| async move {
-            let values = expense_form_to_values(&form);
-            let response = match form.into_create() {
-                Ok(input) => {
-                    match crate::orders::validate_order_link(input.order_id.as_deref()).await {
-                        Ok(()) => match store.create_expense(input).await {
-                            Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
-                                .into_response(),
-                            Err(e) => render_expense_form_error(None, values, e),
-                        },
-                        Err(e) => render_expense_form_error(None, values, e),
-                    }
-                }
-                Err(e) => render_expense_form_error(None, values, invalid_input(e)),
-            };
-            Ok::<_, Rejection>(response)
-        })
-}
-
-fn edit_expense_page(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("expenses" / String / "edit")
-        .and(warp::get())
-        .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
-            let Some(expense) = store
-                .get_expense(&id)
-                .await
-                .map_err(|_| warp::reject::not_found())?
-            else {
-                return Err(warp::reject::not_found());
-            };
-            templates::render_expense_form_html(Some(expense), None)
-                .map(warp::reply::html)
-                .map_err(|_| warp::reject::not_found())
-        })
-}
-
-fn update_expense_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("expenses" / String / "edit")
-        .and(warp::post())
-        .and(warp::body::form())
-        .and(store)
-        .and_then(
-            |id: String, form: ExpenseForm, store: SharedStore| async move {
-                let values = expense_form_to_values(&form);
-                let response = match form.into_update() {
-                    Ok(input) => {
-                        let order_check =
-                            crate::orders::validate_order_link(input.order_id.as_deref()).await;
-                        match order_check {
-                            Ok(()) => match store.update_expense(&id, input).await {
-                                Ok(_) => {
-                                    warp::redirect::redirect(warp::http::Uri::from_static("/"))
-                                        .into_response()
-                                }
-                                Err(e) => {
-                                    let expense = store.get_expense(&id).await.ok().flatten();
-                                    render_expense_form_error(expense, values, e)
-                                }
-                            },
-                            Err(e) => {
-                                let expense = store.get_expense(&id).await.ok().flatten();
-                                render_expense_form_error(expense, values, e)
-                            }
-                        }
-                    }
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
+    CrudFormRoutes {
+        segment: "expenses",
+        new_page: || async { html_page(templates::render_expense_form_html(None, None)) },
+        create: |store: SharedStore, form: ExpenseForm| async move {
+            match form.into_create() {
+                Ok(input) => match create_expense(&store, input).await {
+                    Ok(()) => Ok(redirect_to_index()),
+                    Err(e) => Ok(expense_form_error(None, None, &e.to_string())),
+                },
+                Err((message, form)) => Ok(expense_form_error(None, Some(form.into()), &message)),
+            }
+        },
+        edit_page: |store: SharedStore, id: String| async move {
+            let expense = fetch_or_404(store.get_expense(&id).await)?;
+            html_page(templates::render_expense_form_html(Some(expense), None))
+        },
+        update: |store: SharedStore, id: String, form: ExpenseForm| async move {
+            match form.into_update() {
+                Ok(input) => match update_expense(&store, &id, input).await {
+                    Ok(()) => Ok(redirect_to_index()),
                     Err(e) => {
                         let expense = store.get_expense(&id).await.ok().flatten();
-                        render_expense_form_error(expense, values, invalid_input(e))
+                        Ok(expense_form_error(expense, None, &e.to_string()))
                     }
-                };
-                Ok::<_, Rejection>(response)
-            },
-        )
-}
-
-fn delete_expense_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("expenses" / String / "delete")
-        .and(warp::post())
-        .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
-            match store.delete_expense(&id).await {
-                Ok(()) => {
-                    Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())
-                }
-                Err(StoreError::ExpenseNotFound) => Err(warp::reject::not_found()),
-                Err(e) => render_index_with_message(&store, format!("Delete failed: {e}")).await,
-            }
-        })
-}
-
-fn new_integration_page(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path("integrations")
-        .and(warp::path("new"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(store)
-        .and_then(|_store: SharedStore| async move {
-            templates::render_integration_form_html(None, None)
-                .map(warp::reply::html)
-                .map_err(|_| warp::reject::not_found())
-        })
-}
-
-fn create_integration_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path("integrations")
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::body::form())
-        .and(store)
-        .and_then(|form: IntegrationForm, store: SharedStore| async move {
-            let values = integration_form_to_values(&form);
-            let response = match form.into_create() {
-                Ok(input) => match store.create_integration(input).await {
-                    Ok(_) => {
-                        warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response()
-                    }
-                    Err(e) => render_integration_form_error(None, values, e),
                 },
-                Err(e) => render_integration_form_error(None, values, invalid_input(e)),
-            };
-            Ok::<_, Rejection>(response)
-        })
+                Err((message, form)) => {
+                    let expense = store.get_expense(&id).await.ok().flatten();
+                    Ok(expense_form_error(expense, Some(form.into()), &message))
+                }
+            }
+        },
+        delete: |store: SharedStore, id: String| async move {
+            delete_or_message(&store, store.delete_expense(&id).await).await
+        },
+    }
+    .build::<ExpenseForm, _, _>(store)
 }
 
-fn edit_integration_page(
+fn integration_form_routes(
     store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("integrations" / String / "edit")
-        .and(warp::get())
-        .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
-            let Some(integration) = store
-                .get_integration(&id)
-                .await
-                .map_err(|_| warp::reject::not_found())?
-            else {
-                return Err(warp::reject::not_found());
-            };
-            templates::render_integration_form_html(Some(integration), None)
-                .map(warp::reply::html)
-                .map_err(|_| warp::reject::not_found())
-        })
-}
-
-fn update_integration_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("integrations" / String / "edit")
-        .and(warp::post())
-        .and(warp::body::form())
-        .and(store)
-        .and_then(
-            |id: String, form: IntegrationForm, store: SharedStore| async move {
-                let values = integration_form_to_values(&form);
-                let response = match form.into_update() {
-                    Ok(input) => match store.update_integration(&id, input).await {
-                        Ok(_) => warp::redirect::redirect(warp::http::Uri::from_static("/"))
-                            .into_response(),
-                        Err(e) => {
-                            let integration = store.get_integration(&id).await.ok().flatten();
-                            render_integration_form_error(integration, values, e)
-                        }
-                    },
+) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
+    CrudFormRoutes {
+        segment: "integrations",
+        new_page: || async { html_page(templates::render_integration_form_html(None, None)) },
+        create: |store: SharedStore, form: IntegrationForm| async move {
+            match form.into_create() {
+                Ok(input) => match store.create_integration(input).await {
+                    Ok(_) => Ok(redirect_to_index()),
+                    Err(e) => Ok(integration_form_error(None, None, &e.to_string())),
+                },
+                Err((message, form)) => {
+                    Ok(integration_form_error(None, Some(form.into()), &message))
+                }
+            }
+        },
+        edit_page: |store: SharedStore, id: String| async move {
+            let integration = fetch_or_404(store.get_integration(&id).await)?;
+            html_page(templates::render_integration_form_html(
+                Some(integration),
+                None,
+            ))
+        },
+        update: |store: SharedStore, id: String, form: IntegrationForm| async move {
+            match form.into_update() {
+                Ok(input) => match store.update_integration(&id, input).await {
+                    Ok(_) => Ok(redirect_to_index()),
                     Err(e) => {
                         let integration = store.get_integration(&id).await.ok().flatten();
-                        render_integration_form_error(integration, values, invalid_input(e))
+                        Ok(integration_form_error(integration, None, &e.to_string()))
                     }
-                };
-                Ok::<_, Rejection>(response)
-            },
-        )
-}
-
-fn delete_integration_form(
-    store: impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone + Send + 'static,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone + Send + 'static {
-    warp::path!("integrations" / String / "delete")
-        .and(warp::post())
-        .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
-            match store.delete_integration(&id).await {
-                Ok(()) => {
-                    Ok(warp::redirect::redirect(warp::http::Uri::from_static("/")).into_response())
+                },
+                Err((message, form)) => {
+                    let integration = store.get_integration(&id).await.ok().flatten();
+                    Ok(integration_form_error(
+                        integration,
+                        Some(form.into()),
+                        &message,
+                    ))
                 }
-                Err(StoreError::IntegrationNotFound) => Err(warp::reject::not_found()),
-                Err(e) => render_index_with_message(&store, format!("Delete failed: {e}")).await,
             }
-        })
+        },
+        delete: |store: SharedStore, id: String| async move {
+            delete_or_message(&store, store.delete_integration(&id).await).await
+        },
+    }
+    .build::<IntegrationForm, _, _>(store)
 }
 
-fn bill_form_to_values(form: &BillForm) -> BillFormValues {
-    BillFormValues {
-        kind: form.kind.clone(),
-        status: form.status.clone(),
-        vendor: form.vendor.clone(),
-        invoice_number: form.invoice_number.clone(),
-        order_id: form.order_id.clone(),
-        bill_date: form.bill_date.clone(),
-        due_date: form.due_date.clone(),
-        currency: form.currency.clone(),
-        line_items: form.line_items.clone(),
-        scan_uri: form.scan_uri.clone(),
-        notes: form.notes.clone(),
+async fn create_bill(store: &SharedStore, input: CreateBill) -> Result<(), StoreError> {
+    crate::orders::validate_order_link(input.order_id.as_deref()).await?;
+    store.create_bill(input).await.map(|_| ())
+}
+
+async fn update_bill(store: &SharedStore, id: &str, input: UpdateBill) -> Result<(), StoreError> {
+    crate::orders::validate_order_link(input.order_id.as_deref()).await?;
+    store.update_bill(id, input).await.map(|_| ())
+}
+
+async fn create_expense(store: &SharedStore, input: CreateExpense) -> Result<(), StoreError> {
+    crate::orders::validate_order_link(input.order_id.as_deref()).await?;
+    store.create_expense(input).await.map(|_| ())
+}
+
+async fn update_expense(
+    store: &SharedStore,
+    id: &str,
+    input: UpdateExpense,
+) -> Result<(), StoreError> {
+    crate::orders::validate_order_link(input.order_id.as_deref()).await?;
+    store.update_expense(id, input).await.map(|_| ())
+}
+
+/// Redirect back to the index after a successful mutation.
+fn redirect_to_index() -> Response {
+    warp::redirect::redirect(Uri::from_static("/")).into_response()
+}
+
+/// A missing row is a themed 404; a failed read is a themed 500.
+fn fetch_or_404<T>(fetched: Result<Option<T>, StoreError>) -> Result<T, Rejection> {
+    match fetched {
+        Ok(Some(entity)) => Ok(entity),
+        Ok(None) => Err(warp::reject::not_found()),
+        Err(e) => Err(page_rejection(e)),
     }
 }
 
-fn expense_form_to_values(form: &ExpenseForm) -> ExpenseFormValues {
-    ExpenseFormValues {
-        expense_date: form.expense_date.clone(),
-        category: form.category.clone(),
-        description: form.description.clone(),
-        vendor: form.vendor.clone(),
-        amount_cents: form.amount_cents.clone(),
-        currency: form.currency.clone(),
-        receipt_uri: form.receipt_uri.clone(),
-        bill_id: form.bill_id.clone(),
-        order_id: form.order_id.clone(),
-        notes: form.notes.clone(),
+/// Deleting a missing row is a themed 404; any other failure re-renders the
+/// index with the reason.
+async fn delete_or_message(
+    store: &SharedStore,
+    deleted: Result<(), StoreError>,
+) -> Result<Response, Rejection> {
+    match deleted {
+        Ok(()) => Ok(redirect_to_index()),
+        Err(e) if e.is_not_found() => Err(warp::reject::not_found()),
+        Err(e) => render_index(store, Some(format!("Delete failed: {e}"))).await,
     }
 }
 
-fn integration_form_to_values(form: &IntegrationForm) -> IntegrationFormValues {
-    IntegrationFormValues {
-        name: form.name.clone(),
-        provider: form.provider.clone(),
-        enabled: form.enabled.is_some(),
-        external_account_id: form.external_account_id.clone(),
-        webhook_url: form.webhook_url.clone(),
-        notes: form.notes.clone(),
+fn page_rejection(err: StoreError) -> Rejection {
+    if err.is_not_found() {
+        warp::reject::not_found()
+    } else {
+        warp::reject::reject()
     }
 }
 
-fn invalid_input(message: String) -> StoreError {
-    StoreError::InvalidInput(message)
+fn html_page(rendered: Result<String, askama::Error>) -> Result<Response, Rejection> {
+    rendered
+        .map(|html| warp::reply::html(html).into_response())
+        .map_err(|_| warp::reject::reject())
 }
 
-fn render_bill_form_error(
-    catalog_skus: Vec<CatalogSku>,
-    bill: Option<crate::model::Bill>,
-    values: BillFormValues,
-    err: StoreError,
-) -> warp::reply::Response {
-    let message = err.to_string();
-    match templates::render_bill_form_html_with_values(catalog_skus, bill, Some(message), values) {
+/// 400 with the re-rendered form, or a bare 500 when even that render fails.
+fn form_error_response(rendered: Result<String, askama::Error>) -> Response {
+    match rendered {
         Ok(html) => warp::reply::with_status(warp::reply::html(html), StatusCode::BAD_REQUEST)
             .into_response(),
         Err(_) => warp::reply::with_status(warp::reply(), StatusCode::INTERNAL_SERVER_ERROR)
@@ -511,30 +345,46 @@ fn render_bill_form_error(
     }
 }
 
-fn render_expense_form_error(
-    expense: Option<crate::model::Expense>,
-    values: ExpenseFormValues,
-    err: StoreError,
-) -> warp::reply::Response {
-    let message = err.to_string();
-    match templates::render_expense_form_html_with_values(expense, Some(message), values) {
-        Ok(html) => warp::reply::with_status(warp::reply::html(html), StatusCode::BAD_REQUEST)
-            .into_response(),
-        Err(_) => warp::reply::with_status(warp::reply(), StatusCode::INTERNAL_SERVER_ERROR)
-            .into_response(),
-    }
+/// Re-render the bill form with `message`. `values` carries the submitted
+/// fields back when the submission itself was rejected; without it the form
+/// falls back to the stored bill (or blank defaults).
+async fn bill_form_error(
+    bill: Option<Bill>,
+    values: Option<BillFormValues>,
+    message: &str,
+) -> Response {
+    let (catalog_skus, _) = fetch_catalog_skus().await;
+    let error = Some(message.to_string());
+    form_error_response(match values {
+        Some(values) => {
+            templates::render_bill_form_html_with_values(&catalog_skus, bill, error, values)
+        }
+        None => templates::render_bill_form_html(&catalog_skus, bill, error),
+    })
 }
 
-fn render_integration_form_error(
-    integration: Option<crate::model::Integration>,
-    values: IntegrationFormValues,
-    err: StoreError,
-) -> warp::reply::Response {
-    let message = err.to_string();
-    match templates::render_integration_form_html_with_values(integration, Some(message), values) {
-        Ok(html) => warp::reply::with_status(warp::reply::html(html), StatusCode::BAD_REQUEST)
-            .into_response(),
-        Err(_) => warp::reply::with_status(warp::reply(), StatusCode::INTERNAL_SERVER_ERROR)
-            .into_response(),
-    }
+fn expense_form_error(
+    expense: Option<Expense>,
+    values: Option<ExpenseFormValues>,
+    message: &str,
+) -> Response {
+    let error = Some(message.to_string());
+    form_error_response(match values {
+        Some(values) => templates::render_expense_form_html_with_values(expense, error, values),
+        None => templates::render_expense_form_html(expense, error),
+    })
+}
+
+fn integration_form_error(
+    integration: Option<Integration>,
+    values: Option<IntegrationFormValues>,
+    message: &str,
+) -> Response {
+    let error = Some(message.to_string());
+    form_error_response(match values {
+        Some(values) => {
+            templates::render_integration_form_html_with_values(integration, error, values)
+        }
+        None => templates::render_integration_form_html(integration, error),
+    })
 }

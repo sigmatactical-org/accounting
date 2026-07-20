@@ -1,10 +1,10 @@
 //! [`BillFormTemplate`].
 
-#[allow(unused_imports)]
-use super::*;
 use crate::model::Bill;
 use askama::Template;
 use sigma_theme::nav::SiteHeader;
+
+use super::CatalogSkuRef;
 
 #[derive(Template)]
 #[template(path = "bill_form.html")]

@@ -1,10 +1,10 @@
 //! [`ExpenseFormTemplate`].
 
-#[allow(unused_imports)]
-use super::*;
 use crate::model::Expense;
 use askama::Template;
 use sigma_theme::nav::SiteHeader;
+
+use super::CategoryOption;
 
 #[derive(Template)]
 #[template(path = "expense_form.html")]

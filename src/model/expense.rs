@@ -1,13 +1,15 @@
 //! [`Expense`].
 
-#[allow(unused_imports)]
-use super::*;
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use sigma_pg::form::empty_to_none;
+
+use super::{CreateExpense, ExpenseCategory, UpdateExpense, default_currency, normalize_currency};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Expense {
     pub id: String,
-    pub expense_date: String,
+    pub expense_date: NaiveDate,
     pub category: ExpenseCategory,
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -23,50 +25,42 @@ pub struct Expense {
     pub order_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
-    pub updated_at: String,
+    pub updated_at: DateTime<Utc>,
 }
 impl Expense {
     /// New Expense from a create request.
     pub fn new(input: CreateExpense) -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            expense_date: input.expense_date.trim().to_string(),
+            expense_date: input.expense_date,
             category: input.category,
             description: input.description.trim().to_string(),
-            vendor: trim_to_none(input.vendor),
+            vendor: input.vendor.and_then(empty_to_none),
             amount_cents: input.amount_cents,
             currency: input
                 .currency
-                .map(|s| s.trim().to_uppercase())
-                .filter(|s| !s.is_empty())
+                .map(normalize_currency)
                 .unwrap_or_else(default_currency),
-            receipt_uri: trim_to_none(input.receipt_uri),
-            bill_id: trim_to_none(input.bill_id),
-            order_id: trim_to_none(input.order_id),
-            notes: trim_to_none(input.notes),
-            updated_at: now,
+            receipt_uri: input.receipt_uri.and_then(empty_to_none),
+            bill_id: input.bill_id.and_then(empty_to_none),
+            order_id: input.order_id.and_then(empty_to_none),
+            notes: input.notes.and_then(empty_to_none),
+            updated_at: Utc::now(),
         }
     }
 
     /// Apply a partial update in place.
     pub fn apply_update(&mut self, input: UpdateExpense) {
-        self.expense_date = input.expense_date.trim().to_string();
+        self.expense_date = input.expense_date;
         self.category = input.category;
         self.description = input.description.trim().to_string();
-        self.vendor = trim_to_none(input.vendor);
+        self.vendor = input.vendor.and_then(empty_to_none);
         self.amount_cents = input.amount_cents;
         self.currency = normalize_currency(input.currency);
-        self.receipt_uri = trim_to_none(input.receipt_uri);
-        self.bill_id = trim_to_none(input.bill_id);
-        self.order_id = trim_to_none(input.order_id);
-        self.notes = trim_to_none(input.notes);
-        self.updated_at = chrono::Utc::now().to_rfc3339();
+        self.receipt_uri = input.receipt_uri.and_then(empty_to_none);
+        self.bill_id = input.bill_id.and_then(empty_to_none);
+        self.order_id = input.order_id.and_then(empty_to_none);
+        self.notes = input.notes.and_then(empty_to_none);
+        self.updated_at = Utc::now();
     }
-}
-
-fn trim_to_none(value: Option<String>) -> Option<String> {
-    value
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
 }

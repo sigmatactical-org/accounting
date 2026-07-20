@@ -27,6 +27,30 @@
   <div class="alert alert-warning" role="status">{{ notice }}</div>
   {% endif %}
 
+  <section class="mb-4">
+    <div class="row g-3">
+      <div class="col-sm-4">
+        <div class="border rounded p-3 h-100">
+          <div class="text-secondary small">Money in</div>
+          <div class="h4 mb-0">{% if let Some(total) = money.money_in %}{{ total }}{% else %}<span class="text-secondary">—</span>{% endif %}</div>
+        </div>
+      </div>
+      <div class="col-sm-4">
+        <div class="border rounded p-3 h-100">
+          <div class="text-secondary small">Money out</div>
+          <div class="h4 mb-0">{% if let Some(total) = money.money_out %}{{ total }}{% else %}<span class="text-secondary">—</span>{% endif %}</div>
+        </div>
+      </div>
+      <div class="col-sm-4">
+        <div class="border rounded p-3 h-100">
+          <div class="text-secondary small">Net</div>
+          <div class="h4 mb-0">{% if let Some(total) = money.net %}{{ total }}{% else %}<span class="text-secondary">—</span>{% endif %}</div>
+        </div>
+      </div>
+    </div>
+    <p class="small text-secondary mt-2 mb-0">Money in counts receipts (refunds subtract); money out counts expenses and bills already marked paid.</p>
+  </section>
+
   <section class="mb-5">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
       <h2 class="h4 mb-0">Bills</h2>
@@ -60,7 +84,7 @@
             <td>{{ row.status_label }}</td>
             <td>{{ row.bill.bill_date }}</td>
             <td>{{ row.total_display }}</td>
-            <td class="text-secondary"><small>{{ row.bill.updated_at }}</small></td>
+            <td class="text-secondary"><small>{{ row.updated_display }}</small></td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="/bills/{{ row.bill.id }}/edit">Edit</a>
               <form method="post" action="/bills/{{ row.bill.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this bill?');">
@@ -126,6 +150,54 @@
 
   <section class="mb-5">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+      <h2 class="h4 mb-0">Receipts</h2>
+      {% if payments_configured %}
+      <form method="post" action="/receipts/reconcile" class="d-inline">
+        <button type="submit" class="btn btn-sm btn-outline-primary">Reconcile with payments</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if receipts.is_empty() %}
+    <p class="text-secondary">No receipts yet. Customer payments are recorded here automatically at checkout{% if payments_configured %}; use Reconcile to backfill any the cart could not record{% else %}. Set <code>ACCOUNTING_PAYMENTS_BASE_URL</code> to reconcile against the payments charge log{% endif %}.</p>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Received</th>
+            <th>Kind</th>
+            <th>Amount</th>
+            <th>Order</th>
+            <th>Charge</th>
+            <th>User</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in receipts %}
+          <tr>
+            <td class="text-secondary"><small>{{ row.occurred_display }}</small></td>
+            <td>{{ row.kind_label }}</td>
+            <td>{{ row.amount_display }}</td>
+            <td>{% if let Some(oid) = row.receipt.order_id.as_ref() %}{% if let Some(href) = row.order_href.as_ref() %}<a href="{{ href }}"><code>{{ oid }}</code></a>{% else %}<code>{{ oid }}</code>{% endif %}{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            <td><code>{{ row.receipt.charge_id }}</code></td>
+            <td><code>{{ row.receipt.user_id }}</code></td>
+            <td class="text-nowrap">
+              <form method="post" action="/receipts/{{ row.receipt.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this receipt?');">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="mb-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
       <h2 class="h4 mb-0">Integrations</h2>
     </div>
 
@@ -151,7 +223,7 @@
             <td>{{ row.provider_label }}</td>
             <td>{% if row.integration.enabled %}<span class="text-success">Yes</span>{% else %}<span class="text-secondary">No</span>{% endif %}</td>
             <td>{% if let Some(id) = row.integration.external_account_id.as_ref() %}<code>{{ id }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
-            <td class="text-secondary"><small>{{ row.integration.updated_at }}</small></td>
+            <td class="text-secondary"><small>{{ row.updated_display }}</small></td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="/integrations/{{ row.integration.id }}/edit">Edit</a>
               <form method="post" action="/integrations/{{ row.integration.id }}/delete" class="d-inline" onsubmit="return confirm('Delete this integration?');">
@@ -188,6 +260,7 @@
     <ul class="small text-secondary">
       <li><code>GET /bills</code>, <code>POST /bills</code>, <code>GET /bills/{id}</code>, <code>PUT /bills/{id}</code>, <code>DELETE /bills/{id}</code></li>
       <li><code>GET /expenses</code>, <code>POST /expenses</code>, <code>GET /expenses/{id}</code>, <code>PUT /expenses/{id}</code>, <code>DELETE /expenses/{id}</code></li>
+      <li><code>GET /receipts</code>, <code>POST /receipts</code> (idempotent on <code>charge_id</code>), <code>GET /receipts/{id}</code>, <code>DELETE /receipts/{id}</code></li>
       <li><code>GET /integrations</code>, <code>POST /integrations</code>, <code>GET /integrations/{id}</code>, <code>PUT /integrations/{id}</code>, <code>DELETE /integrations/{id}</code></li>
       <li><code>GET /catalog/skus</code> — proxy to sigma-catalog (requires <code>ACCOUNTING_CATALOG_BASE_URL</code>)</li>
     </ul>

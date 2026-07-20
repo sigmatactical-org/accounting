@@ -7,27 +7,54 @@
 mod orders_error;
 pub use orders_error::OrdersError;
 
+use serde::Deserialize;
+use sigma_pg::clients::http;
+
 use crate::store::StoreError;
+
+/// Minimal view of an order row, used to map charges back to orders during
+/// receipt reconcile.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrderRef {
+    pub id: String,
+    #[serde(default)]
+    pub charge_id: Option<String>,
+}
 
 fn build_order_url(base: &str, order_id: &str) -> String {
     format!("{base}orders/{order_id}")
 }
 
+/// Every order as a minimal ref (`GET /orders`).
+///
+/// # Errors
+///
+/// [`OrdersError::NotConfigured`] when `ACCOUNTING_ORDERS_BASE_URL` is unset;
+/// [`OrdersError::Request`] when the orders service answers with an error.
+pub async fn fetch_order_refs() -> Result<Vec<OrderRef>, OrdersError> {
+    let base = crate::config::orders_base_url().ok_or(OrdersError::NotConfigured)?;
+    let url = format!("{base}orders");
+    let response = http::with_internal_auth(http::client().get(url))
+        .send()
+        .await?;
+    let response = http::ensure_success(response)
+        .await
+        .map_err(OrdersError::Request)?;
+    Ok(response.json().await?)
+}
+
 /// Whether `order_id` names an existing sales order.
 async fn order_exists(base: &str, order_id: &str) -> Result<bool, OrdersError> {
     let url = build_order_url(base, order_id);
-    let response =
-        sigma_pg::clients::http::with_internal_auth(sigma_pg::clients::http::client().get(url))
-            .send()
-            .await?;
+    let response = http::with_internal_auth(http::client().get(url))
+        .send()
+        .await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(false);
     }
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(OrdersError::Request(format!("{status}: {body}")));
-    }
+    http::ensure_success(response)
+        .await
+        .map_err(OrdersError::Request)?;
     Ok(true)
 }
 
@@ -40,7 +67,8 @@ async fn order_exists(base: &str, order_id: &str) -> Result<bool, OrdersError> {
 /// # Errors
 ///
 /// [`StoreError::OrderNotFound`] when the order doesn't exist;
-/// [`StoreError::Orders`] when the orders service can't be reached.
+/// [`StoreError::Orders`] (mapped to `502`) when the orders service can't be
+/// reached.
 pub async fn validate_order_link(order_id: Option<&str>) -> Result<(), StoreError> {
     let Some(id) = order_id.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(());

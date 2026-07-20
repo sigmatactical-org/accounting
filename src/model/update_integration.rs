@@ -1,8 +1,8 @@
 //! [`UpdateIntegration`].
 
-#[allow(unused_imports)]
-use super::*;
 use serde::Deserialize;
+
+use super::IntegrationProvider;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateIntegration {

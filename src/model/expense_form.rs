@@ -1,8 +1,14 @@
 //! [`ExpenseForm`].
 
-#[allow(unused_imports)]
-use super::*;
+use chrono::NaiveDate;
 use serde::Deserialize;
+use sigma_pg::form::empty_to_none;
+
+use super::{CreateExpense, ExpenseCategory, UpdateExpense, normalize_currency, parse_date};
+
+/// The fallible parts of the form, parsed before any field is moved out so a
+/// rejected submission can hand the raw form back for re-display.
+type ParsedExpense = (ExpenseCategory, NaiveDate, i64);
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExpenseForm {
@@ -18,14 +24,27 @@ pub struct ExpenseForm {
     pub notes: String,
 }
 impl ExpenseForm {
-    /// Validate the form into a create request.
-    pub fn into_create(self) -> Result<CreateExpense, String> {
+    fn parse(&self) -> Result<ParsedExpense, String> {
+        Ok((
+            self.category.parse()?,
+            parse_date(&self.expense_date, "expense date")?,
+            parse_amount_cents(&self.amount_cents)?,
+        ))
+    }
+
+    /// Validate the form into a create request, returning the rejection
+    /// message and the untouched form when validation fails.
+    pub fn into_create(self) -> Result<CreateExpense, (String, Self)> {
+        let (category, expense_date, amount_cents) = match self.parse() {
+            Ok(parsed) => parsed,
+            Err(message) => return Err((message, self)),
+        };
         Ok(CreateExpense {
-            expense_date: self.expense_date,
-            category: parse_expense_category(&self.category)?,
+            expense_date,
+            category,
             description: self.description,
             vendor: empty_to_none(self.vendor),
-            amount_cents: parse_amount_cents(&self.amount_cents)?,
+            amount_cents,
             currency: empty_to_none(self.currency),
             receipt_uri: empty_to_none(self.receipt_uri),
             bill_id: empty_to_none(self.bill_id),
@@ -34,14 +53,19 @@ impl ExpenseForm {
         })
     }
 
-    /// Validate the form into an update request.
-    pub fn into_update(self) -> Result<UpdateExpense, String> {
+    /// Validate the form into an update request, returning the rejection
+    /// message and the untouched form when validation fails.
+    pub fn into_update(self) -> Result<UpdateExpense, (String, Self)> {
+        let (category, expense_date, amount_cents) = match self.parse() {
+            Ok(parsed) => parsed,
+            Err(message) => return Err((message, self)),
+        };
         Ok(UpdateExpense {
-            expense_date: self.expense_date,
-            category: parse_expense_category(&self.category)?,
+            expense_date,
+            category,
             description: self.description,
             vendor: empty_to_none(self.vendor),
-            amount_cents: parse_amount_cents(&self.amount_cents)?,
+            amount_cents,
             currency: normalize_currency(self.currency),
             receipt_uri: empty_to_none(self.receipt_uri),
             bill_id: empty_to_none(self.bill_id),

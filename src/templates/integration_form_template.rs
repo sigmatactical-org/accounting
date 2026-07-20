@@ -1,7 +1,5 @@
 //! [`IntegrationFormTemplate`].
 
-#[allow(unused_imports)]
-use super::*;
 use crate::model::Integration;
 use askama::Template;
 use sigma_theme::nav::SiteHeader;

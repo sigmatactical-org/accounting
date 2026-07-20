@@ -1,14 +1,13 @@
-//! [`BillRow`].
+//! [`ReceiptRow`].
 
-use crate::model::Bill;
+use crate::model::Receipt;
 
 /// One rendered table row.
-pub struct BillRow {
-    pub bill: Bill,
+pub struct ReceiptRow {
+    pub receipt: Receipt,
     pub kind_label: &'static str,
-    pub status_label: &'static str,
-    pub total_display: String,
-    pub updated_display: String,
+    pub amount_display: String,
+    pub occurred_display: String,
     /// Link to the linked order's admin page, when `ACCOUNTING_ORDERS_PUBLIC_URL` is set.
     pub order_href: Option<String>,
 }

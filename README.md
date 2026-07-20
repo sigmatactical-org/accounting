@@ -14,6 +14,8 @@ Shared site chrome comes from [sigma-theme](https://github.com/sigmatactical-org
 
 - **Bills** — scanned (with scan URI) and digital bills with vendor, dates, status, and line items
 - **Expenses** — categorized direct spend records with per-currency totals, optionally linked to a bill and/or a sales order
+- **Receipts** — money received from customers, one row per successful [sigma-payments](https://github.com/sigmatactical-org/payments) charge; recorded by the cart at checkout and reconcilable against the payments charge log
+- **Money in / out** — per-currency summary of receipts against expenses and paid bills
 - **Integrations** — QuickBooks, Xero, and custom provider connections
 - **Catalog linkage** — optional line-item references to catalog SKU ids
 - **Order linkage** — optional bill-level reference to a [sigma-orders](https://github.com/sigmatactical-org/orders) sales order id, validated against the orders service when configured
@@ -29,6 +31,7 @@ Shared site chrome comes from [sigma-theme](https://github.com/sigmatactical-org
 | `ACCOUNTING_CATALOG_BASE_URL` | Base URL of sigma-catalog (e.g. `http://127.0.0.1:8081/`) |
 | `ACCOUNTING_ORDERS_BASE_URL` | Internal base URL of sigma-orders for `order_id` validation (e.g. `http://127.0.0.1:8085/`); unset skips validation |
 | `ACCOUNTING_ORDERS_PUBLIC_URL` | Public base URL of the orders admin UI, for order links on the bills list |
+| `ACCOUNTING_PAYMENTS_BASE_URL` | Internal base URL of sigma-payments (e.g. `http://127.0.0.1:8090/`), enabling receipt reconcile; unset hides the reconcile action |
 
 ## Data model
 
@@ -61,6 +64,25 @@ Each expense has:
 - optional `order_id` — linked sales order, validated like the bill-level `order_id`
 - optional `notes`
 
+### Receipts
+
+Money in, one row per successful payments charge. Receipts are written by the
+cart at checkout and by reconcile — there is no create/edit form.
+
+- `charge_id` — the sigma-payments charge, unique across receipts and the
+  idempotency key: recording the same charge twice is a no-op
+- optional `order_id` — the sales order the payment was for
+- `user_id` — the paying customer
+- `kind` — `deposit`, `balance`, or `refund` (refunds subtract from money in)
+- `amount_cents`, `currency` (defaults to `USD`), `occurred_at`
+- optional `notes`
+
+Charges reference the *cart*, not the order — the order does not exist yet
+when the deposit is charged — so the cart is the only caller that can record a
+receipt with both ids. Its push is best-effort and never fails a paid
+checkout; **Reconcile with payments** on the index backfills anything missed
+by sweeping `GET /api/charges` for successful charges without a receipt.
+
 ### Integrations
 
 Each integration has:
@@ -89,6 +111,10 @@ Each integration has:
 | `POST` | `/integrations` | Create integration |
 | `PUT` | `/integrations/{id}` | Update integration |
 | `DELETE` | `/integrations/{id}` | Delete integration |
+| `GET` | `/receipts` | List all receipts |
+| `GET` | `/receipts/{id}` | Get one receipt |
+| `POST` | `/receipts` | Record a receipt (JSON); idempotent on `charge_id` — `201` when newly recorded, `200` with the existing receipt when the charge already had one |
+| `DELETE` | `/receipts/{id}` | Delete receipt |
 | `GET` | `/catalog/skus` | Proxy catalog SKUs (requires `ACCOUNTING_CATALOG_BASE_URL`) |
 
 Example create digital bill:

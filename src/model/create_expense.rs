@@ -1,12 +1,13 @@
 //! [`CreateExpense`].
 
-#[allow(unused_imports)]
-use super::*;
+use chrono::NaiveDate;
 use serde::Deserialize;
+
+use super::ExpenseCategory;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateExpense {
-    pub expense_date: String,
+    pub expense_date: NaiveDate,
     pub category: ExpenseCategory,
     pub description: String,
     #[serde(default)]

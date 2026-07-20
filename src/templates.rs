@@ -10,6 +10,8 @@ mod index_template;
 mod integration_form_template;
 mod integration_form_values;
 mod integration_row;
+mod money_summary;
+mod receipt_row;
 pub(crate) use bill_form_template::BillFormTemplate;
 pub use bill_form_values::BillFormValues;
 pub use bill_row::BillRow;
@@ -22,17 +24,23 @@ pub(crate) use index_template::IndexTemplate;
 pub(crate) use integration_form_template::IntegrationFormTemplate;
 pub use integration_form_values::IntegrationFormValues;
 pub use integration_row::IntegrationRow;
+pub(crate) use money_summary::MoneySummary;
+pub use receipt_row::ReceiptRow;
 
 use askama::Template;
+use chrono::{DateTime, Utc};
 
 use crate::catalog::CatalogSku;
 use crate::model::{
-    Bill, BillKind, BillStatus, Expense, ExpenseCategory, Integration, IntegrationProvider,
-    format_line_items_text,
+    Bill, BillKind, BillStatus, DATE_FORMAT, Expense, ExpenseCategory, Integration,
+    IntegrationProvider, Receipt, format_line_items_text,
 };
 use sigma_theme::copyright_years;
 use sigma_theme::nav::{SiteHeader, site_menu};
 use sigma_theme::site_nav::{AppSiteNav, render_app_site_nav};
+
+/// Timestamp format for table cells (minute precision, always UTC).
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M UTC";
 
 fn page_header() -> SiteHeader {
     SiteHeader::new("Accounting").with_menu(site_menu(None))
@@ -52,81 +60,41 @@ fn site_nav(return_path: &str) -> Result<String, askama::Error> {
     })
 }
 
+fn timestamp_display(at: DateTime<Utc>) -> String {
+    at.format(TIMESTAMP_FORMAT).to_string()
+}
+
+/// Admin link to a linked order, when both a public orders URL and an order
+/// id are present.
+fn order_href(orders_public_base: Option<&String>, order_id: Option<&String>) -> Option<String> {
+    match (orders_public_base, order_id) {
+        (Some(base), Some(order_id)) => Some(format!("{base}admin/orders/{order_id}")),
+        _ => None,
+    }
+}
+
 fn bill_rows(bills: Vec<Bill>) -> Vec<BillRow> {
     let orders_public_base = crate::config::orders_public_base_url();
     bills
         .into_iter()
-        .map(|bill| {
-            let kind_label = match bill.kind {
-                BillKind::Scanned => "Scanned".to_string(),
-                BillKind::Digital => "Digital".to_string(),
-            };
-            let status_label = match bill.status {
-                BillStatus::Draft => "Draft".to_string(),
-                BillStatus::Approved => "Approved".to_string(),
-                BillStatus::Paid => "Paid".to_string(),
-                BillStatus::Void => "Void".to_string(),
-            };
-            let total_display = format_amount(bill.total_cents, &bill.currency);
-            let order_href = match (&orders_public_base, &bill.order_id) {
-                (Some(base), Some(order_id)) => Some(format!("{base}admin/orders/{order_id}")),
-                _ => None,
-            };
-            BillRow {
-                bill,
-                kind_label,
-                status_label,
-                total_display,
-                order_href,
-            }
+        .map(|bill| BillRow {
+            kind_label: bill.kind.label(),
+            status_label: bill.status.label(),
+            total_display: format_amount(bill.total_cents, &bill.currency),
+            updated_display: timestamp_display(bill.updated_at),
+            order_href: order_href(orders_public_base.as_ref(), bill.order_id.as_ref()),
+            bill,
         })
         .collect()
 }
 
-fn expense_category_label(category: ExpenseCategory) -> &'static str {
-    match category {
-        ExpenseCategory::Materials => "Materials",
-        ExpenseCategory::Shipping => "Shipping",
-        ExpenseCategory::Tooling => "Tooling",
-        ExpenseCategory::Software => "Software",
-        ExpenseCategory::Travel => "Travel",
-        ExpenseCategory::Fees => "Fees",
-        ExpenseCategory::Other => "Other",
-    }
-}
-
-fn expense_category_value(category: ExpenseCategory) -> &'static str {
-    match category {
-        ExpenseCategory::Materials => "materials",
-        ExpenseCategory::Shipping => "shipping",
-        ExpenseCategory::Tooling => "tooling",
-        ExpenseCategory::Software => "software",
-        ExpenseCategory::Travel => "travel",
-        ExpenseCategory::Fees => "fees",
-        ExpenseCategory::Other => "other",
-    }
-}
-
-const EXPENSE_CATEGORIES: [ExpenseCategory; 7] = [
-    ExpenseCategory::Materials,
-    ExpenseCategory::Shipping,
-    ExpenseCategory::Tooling,
-    ExpenseCategory::Software,
-    ExpenseCategory::Travel,
-    ExpenseCategory::Fees,
-    ExpenseCategory::Other,
-];
-
 fn category_options(selected: &str) -> Vec<CategoryOption> {
-    EXPENSE_CATEGORIES
+    ExpenseCategory::ALL
         .into_iter()
-        .map(|category| {
-            let value = expense_category_value(category);
-            CategoryOption {
-                value,
-                label: expense_category_label(category),
-                selected: value == selected,
-            }
+        .map(|category| CategoryOption {
+            value: category.as_str(),
+            label: category.label(),
+            selected: category.as_str() == selected,
         })
         .collect()
 }
@@ -135,35 +103,87 @@ fn expense_rows(expenses: Vec<Expense>) -> Vec<ExpenseRow> {
     let orders_public_base = crate::config::orders_public_base_url();
     expenses
         .into_iter()
-        .map(|expense| {
-            let category_label = expense_category_label(expense.category).to_string();
-            let amount_display = format_amount(expense.amount_cents, &expense.currency);
-            let order_href = match (&orders_public_base, &expense.order_id) {
-                (Some(base), Some(order_id)) => Some(format!("{base}admin/orders/{order_id}")),
-                _ => None,
-            };
-            ExpenseRow {
-                expense,
-                category_label,
-                amount_display,
-                order_href,
-            }
+        .map(|expense| ExpenseRow {
+            category_label: expense.category.label(),
+            amount_display: format_amount(expense.amount_cents, &expense.currency),
+            order_href: order_href(orders_public_base.as_ref(), expense.order_id.as_ref()),
+            expense,
         })
         .collect()
+}
+
+fn receipt_rows(receipts: Vec<Receipt>) -> Vec<ReceiptRow> {
+    let orders_public_base = crate::config::orders_public_base_url();
+    receipts
+        .into_iter()
+        .map(|receipt| ReceiptRow {
+            kind_label: receipt.kind.label(),
+            amount_display: format_amount(receipt.amount_cents, &receipt.currency),
+            occurred_display: timestamp_display(receipt.occurred_at),
+            order_href: order_href(orders_public_base.as_ref(), receipt.order_id.as_ref()),
+            receipt,
+        })
+        .collect()
+}
+
+/// Per-currency money in / money out / net.
+///
+/// Money in is receipts with refunds subtracting; money out is expenses plus
+/// bills already marked paid — an unpaid bill is a commitment, not cash that
+/// has left the account.
+fn money_summary(
+    receipts: &[ReceiptRow],
+    expenses: &[ExpenseRow],
+    bills: &[BillRow],
+) -> MoneySummary {
+    let mut money_in: Vec<(String, i64)> = Vec::new();
+    for row in receipts {
+        let amount = row.receipt.kind.sign() * row.receipt.amount_cents;
+        add_currency_total(&mut money_in, &row.receipt.currency, amount);
+    }
+
+    let mut money_out: Vec<(String, i64)> = Vec::new();
+    for row in expenses {
+        add_currency_total(
+            &mut money_out,
+            &row.expense.currency,
+            row.expense.amount_cents,
+        );
+    }
+    for row in bills.iter().filter(|r| r.bill.status == BillStatus::Paid) {
+        add_currency_total(&mut money_out, &row.bill.currency, row.bill.total_cents);
+    }
+
+    let mut net = money_in.clone();
+    for (currency, total) in &money_out {
+        add_currency_total(&mut net, currency, -total);
+    }
+
+    MoneySummary {
+        money_in: format_currency_totals(&money_in),
+        money_out: format_currency_totals(&money_out),
+        net: format_currency_totals(&net),
+    }
 }
 
 /// Sum of listed expenses per currency, e.g. `USD 12.50 + EUR 3.00`.
 fn expense_total_display(expenses: &[ExpenseRow]) -> Option<String> {
     let mut totals: Vec<(String, i64)> = Vec::new();
     for row in expenses {
-        match totals
-            .iter_mut()
-            .find(|(currency, _)| *currency == row.expense.currency)
-        {
-            Some((_, total)) => *total += row.expense.amount_cents,
-            None => totals.push((row.expense.currency.clone(), row.expense.amount_cents)),
-        }
+        add_currency_total(&mut totals, &row.expense.currency, row.expense.amount_cents);
     }
+    format_currency_totals(&totals)
+}
+
+/// Accumulate `amount` into the per-currency running totals.
+fn add_currency_total(totals: &mut Vec<(String, i64)>, currency: &str, amount: i64) {
+    match totals.iter_mut().find(|(c, _)| c == currency) {
+        Some((_, total)) => *total += amount,
+        None => totals.push((currency.to_string(), amount)),
+    }
+}
+
+fn format_currency_totals(totals: &[(String, i64)]) -> Option<String> {
     if totals.is_empty() {
         return None;
     }
@@ -179,52 +199,43 @@ fn expense_total_display(expenses: &[ExpenseRow]) -> Option<String> {
 fn integration_rows(integrations: Vec<Integration>) -> Vec<IntegrationRow> {
     integrations
         .into_iter()
-        .map(|integration| {
-            let provider_label = match integration.provider {
-                IntegrationProvider::QuickBooks => "QuickBooks".to_string(),
-                IntegrationProvider::Xero => "Xero".to_string(),
-                IntegrationProvider::Custom => "Custom".to_string(),
-            };
-            IntegrationRow {
-                integration,
-                provider_label,
-            }
+        .map(|integration| IntegrationRow {
+            provider_label: integration.provider.label(),
+            updated_display: timestamp_display(integration.updated_at),
+            integration,
         })
         .collect()
 }
 
-fn catalog_sku_refs(skus: Vec<CatalogSku>) -> Vec<CatalogSkuRef> {
-    skus.into_iter()
+fn catalog_sku_refs(skus: &[CatalogSku]) -> Vec<CatalogSkuRef> {
+    skus.iter()
         .map(|sku| CatalogSkuRef {
-            id: sku.id,
-            sku_code: sku.sku_code,
-            name: sku.name,
+            id: sku.id.clone(),
+            sku_code: sku.sku_code.clone(),
+            name: sku.name.clone(),
         })
         .collect()
 }
 
+/// `USD 12.50` — exact integer-cent formatting (no float rounding).
 fn format_amount(cents: i64, currency: &str) -> String {
-    let dollars = cents as f64 / 100.0;
-    format!("{currency} {dollars:.2}")
+    let sign = if cents < 0 { "-" } else { "" };
+    let cents = cents.unsigned_abs();
+    format!("{currency} {sign}{}.{:02}", cents / 100, cents % 100)
 }
 
 fn values_from_bill(bill: &Bill) -> BillFormValues {
     BillFormValues {
-        kind: match bill.kind {
-            BillKind::Scanned => "scanned".to_string(),
-            BillKind::Digital => "digital".to_string(),
-        },
-        status: match bill.status {
-            BillStatus::Draft => "draft".to_string(),
-            BillStatus::Approved => "approved".to_string(),
-            BillStatus::Paid => "paid".to_string(),
-            BillStatus::Void => "void".to_string(),
-        },
+        kind: bill.kind.as_str().to_string(),
+        status: bill.status.as_str().to_string(),
         vendor: bill.vendor.clone(),
         invoice_number: bill.invoice_number.clone().unwrap_or_default(),
         order_id: bill.order_id.clone().unwrap_or_default(),
-        bill_date: bill.bill_date.clone(),
-        due_date: bill.due_date.clone().unwrap_or_default(),
+        bill_date: bill.bill_date.format(DATE_FORMAT).to_string(),
+        due_date: bill
+            .due_date
+            .map(|date| date.format(DATE_FORMAT).to_string())
+            .unwrap_or_default(),
         currency: bill.currency.clone(),
         line_items: format_line_items_text(&bill.line_items),
         scan_uri: bill.scan_uri.clone().unwrap_or_default(),
@@ -234,8 +245,8 @@ fn values_from_bill(bill: &Bill) -> BillFormValues {
 
 fn default_bill_form_values() -> BillFormValues {
     BillFormValues {
-        kind: "digital".to_string(),
-        status: "draft".to_string(),
+        kind: BillKind::Digital.as_str().to_string(),
+        status: BillStatus::Draft.as_str().to_string(),
         vendor: String::new(),
         invoice_number: String::new(),
         order_id: String::new(),
@@ -250,8 +261,8 @@ fn default_bill_form_values() -> BillFormValues {
 
 fn values_from_expense(expense: &Expense) -> ExpenseFormValues {
     ExpenseFormValues {
-        expense_date: expense.expense_date.clone(),
-        category: expense_category_value(expense.category).to_string(),
+        expense_date: expense.expense_date.format(DATE_FORMAT).to_string(),
+        category: expense.category.as_str().to_string(),
         description: expense.description.clone(),
         vendor: expense.vendor.clone().unwrap_or_default(),
         amount_cents: expense.amount_cents.to_string(),
@@ -266,7 +277,7 @@ fn values_from_expense(expense: &Expense) -> ExpenseFormValues {
 fn default_expense_form_values() -> ExpenseFormValues {
     ExpenseFormValues {
         expense_date: String::new(),
-        category: "other".to_string(),
+        category: ExpenseCategory::Other.as_str().to_string(),
         description: String::new(),
         vendor: String::new(),
         amount_cents: String::new(),
@@ -281,11 +292,7 @@ fn default_expense_form_values() -> ExpenseFormValues {
 fn values_from_integration(integration: &Integration) -> IntegrationFormValues {
     IntegrationFormValues {
         name: integration.name.clone(),
-        provider: match integration.provider {
-            IntegrationProvider::QuickBooks => "quickbooks".to_string(),
-            IntegrationProvider::Xero => "xero".to_string(),
-            IntegrationProvider::Custom => "custom".to_string(),
-        },
+        provider: integration.provider.as_str().to_string(),
         enabled: integration.enabled,
         external_account_id: integration.external_account_id.clone().unwrap_or_default(),
         webhook_url: integration.webhook_url.clone().unwrap_or_default(),
@@ -296,7 +303,7 @@ fn values_from_integration(integration: &Integration) -> IntegrationFormValues {
 fn default_integration_form_values() -> IntegrationFormValues {
     IntegrationFormValues {
         name: String::new(),
-        provider: "quickbooks".to_string(),
+        provider: IntegrationProvider::QuickBooks.as_str().to_string(),
         enabled: true,
         external_account_id: String::new(),
         webhook_url: String::new(),
@@ -305,7 +312,7 @@ fn default_integration_form_values() -> IntegrationFormValues {
 }
 
 fn render_bill_form(
-    catalog_skus: Vec<CatalogSku>,
+    catalog_skus: &[CatalogSku],
     bill: Option<Bill>,
     error: Option<String>,
     values: BillFormValues,
@@ -318,12 +325,12 @@ fn render_bill_form(
         .unwrap_or_else(|| "/bills/new".to_string());
     BillFormTemplate {
         bill,
-        kind_scanned: kind == "scanned",
-        kind_digital: kind == "digital",
-        status_draft: status == "draft",
-        status_approved: status == "approved",
-        status_paid: status == "paid",
-        status_void: status == "void",
+        kind_scanned: kind == BillKind::Scanned.as_str(),
+        kind_digital: kind == BillKind::Digital.as_str(),
+        status_draft: status == BillStatus::Draft.as_str(),
+        status_approved: status == BillStatus::Approved.as_str(),
+        status_paid: status == BillStatus::Paid.as_str(),
+        status_void: status == BillStatus::Void.as_str(),
         vendor: values.vendor,
         invoice_number: values.invoice_number,
         order_id: values.order_id,
@@ -385,9 +392,9 @@ fn render_integration_form(
     IntegrationFormTemplate {
         integration,
         name: values.name,
-        provider_quickbooks: provider == "quickbooks",
-        provider_xero: provider == "xero",
-        provider_custom: provider == "custom",
+        provider_quickbooks: provider == IntegrationProvider::QuickBooks.as_str(),
+        provider_xero: provider == IntegrationProvider::Xero.as_str(),
+        provider_custom: provider == IntegrationProvider::Custom.as_str(),
         enabled: values.enabled,
         external_account_id: values.external_account_id,
         webhook_url: values.webhook_url,
@@ -406,21 +413,28 @@ fn render_integration_form(
 pub fn render_index_html(
     bills: Vec<Bill>,
     expenses: Vec<Expense>,
+    receipts: Vec<Receipt>,
     integrations: Vec<Integration>,
-    catalog_skus: Vec<CatalogSku>,
+    catalog_skus: &[CatalogSku],
     catalog_notice: Option<String>,
     message: Option<String>,
 ) -> Result<String, askama::Error> {
+    let bills = bill_rows(bills);
     let expenses = expense_rows(expenses);
+    let receipts = receipt_rows(receipts);
     let expense_total = expense_total_display(&expenses);
+    let money = money_summary(&receipts, &expenses, &bills);
     IndexTemplate {
-        bills: bill_rows(bills),
+        bills,
         expenses,
         expense_total,
+        receipts,
+        money,
         integrations: integration_rows(integrations),
         catalog_skus: catalog_sku_refs(catalog_skus),
         catalog_notice,
         catalog_configured: crate::config::catalog_configured(),
+        payments_configured: crate::config::payments_configured(),
         message,
         site_header: page_header(),
         site_nav: site_nav("/")?,
@@ -433,7 +447,7 @@ pub fn render_index_html(
 ///
 /// Returns [`askama::Error`] when template rendering fails.
 pub fn render_bill_form_html(
-    catalog_skus: Vec<CatalogSku>,
+    catalog_skus: &[CatalogSku],
     bill: Option<Bill>,
     error: Option<String>,
 ) -> Result<String, askama::Error> {
@@ -448,7 +462,7 @@ pub fn render_bill_form_html(
 ///
 /// Returns [`askama::Error`] when template rendering fails.
 pub fn render_bill_form_html_with_values(
-    catalog_skus: Vec<CatalogSku>,
+    catalog_skus: &[CatalogSku],
     bill: Option<Bill>,
     error: Option<String>,
     values: BillFormValues,
@@ -504,4 +518,30 @@ pub fn render_integration_form_html_with_values(
     values: IntegrationFormValues,
 ) -> Result<String, askama::Error> {
     render_integration_form(integration, error, values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_amount_uses_exact_integer_cents() {
+        assert_eq!(format_amount(0, "USD"), "USD 0.00");
+        assert_eq!(format_amount(5, "USD"), "USD 0.05");
+        assert_eq!(format_amount(1250, "USD"), "USD 12.50");
+        assert_eq!(format_amount(-1250, "USD"), "USD -12.50");
+        assert_eq!(format_amount(i64::MAX, "USD"), "USD 92233720368547758.07");
+    }
+
+    #[test]
+    fn category_options_mark_the_selected_value() {
+        let options = category_options("tooling");
+        assert_eq!(options.len(), ExpenseCategory::ALL.len());
+        let selected: Vec<&str> = options
+            .iter()
+            .filter(|option| option.selected)
+            .map(|option| option.value)
+            .collect();
+        assert_eq!(selected, vec!["tooling"]);
+    }
 }

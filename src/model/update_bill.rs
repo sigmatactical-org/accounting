@@ -1,8 +1,9 @@
 //! [`UpdateBill`].
 
-#[allow(unused_imports)]
-use super::*;
+use chrono::NaiveDate;
 use serde::Deserialize;
+
+use super::{BillKind, BillLineItem, BillStatus};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateBill {
@@ -12,8 +13,8 @@ pub struct UpdateBill {
     pub invoice_number: Option<String>,
     #[serde(default)]
     pub order_id: Option<String>,
-    pub bill_date: String,
-    pub due_date: Option<String>,
+    pub bill_date: NaiveDate,
+    pub due_date: Option<NaiveDate>,
     pub currency: String,
     #[serde(default)]
     pub line_items: Vec<BillLineItem>,
