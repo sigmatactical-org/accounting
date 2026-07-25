@@ -143,7 +143,8 @@ fn bill_form_routes(
                     Ok(()) => Ok(redirect_to_index()),
                     Err(e) => Ok(bill_form_error(None, None, &e.to_string()).await),
                 },
-                Err((message, form)) => {
+                Err(rejected) => {
+                    let (message, form) = *rejected;
                     Ok(bill_form_error(None, Some(form.into()), &message).await)
                 }
             }
@@ -166,7 +167,8 @@ fn bill_form_routes(
                         Ok(bill_form_error(bill, None, &e.to_string()).await)
                     }
                 },
-                Err((message, form)) => {
+                Err(rejected) => {
+                    let (message, form) = *rejected;
                     let bill = store.get_bill(&id).await.ok().flatten();
                     Ok(bill_form_error(bill, Some(form.into()), &message).await)
                 }
@@ -191,7 +193,10 @@ fn expense_form_routes(
                     Ok(()) => Ok(redirect_to_index()),
                     Err(e) => Ok(expense_form_error(None, None, &e.to_string())),
                 },
-                Err((message, form)) => Ok(expense_form_error(None, Some(form.into()), &message)),
+                Err(rejected) => {
+                    let (message, form) = *rejected;
+                    Ok(expense_form_error(None, Some(form.into()), &message))
+                }
             }
         },
         edit_page: |store: SharedStore, id: String| async move {
@@ -207,7 +212,8 @@ fn expense_form_routes(
                         Ok(expense_form_error(expense, None, &e.to_string()))
                     }
                 },
-                Err((message, form)) => {
+                Err(rejected) => {
+                    let (message, form) = *rejected;
                     let expense = store.get_expense(&id).await.ok().flatten();
                     Ok(expense_form_error(expense, Some(form.into()), &message))
                 }
@@ -232,7 +238,8 @@ fn integration_form_routes(
                     Ok(_) => Ok(redirect_to_index()),
                     Err(e) => Ok(integration_form_error(None, None, &e.to_string())),
                 },
-                Err((message, form)) => {
+                Err(rejected) => {
+                    let (message, form) = *rejected;
                     Ok(integration_form_error(None, Some(form.into()), &message))
                 }
             }
@@ -253,7 +260,8 @@ fn integration_form_routes(
                         Ok(integration_form_error(integration, None, &e.to_string()))
                     }
                 },
-                Err((message, form)) => {
+                Err(rejected) => {
+                    let (message, form) = *rejected;
                     let integration = store.get_integration(&id).await.ok().flatten();
                     Ok(integration_form_error(
                         integration,

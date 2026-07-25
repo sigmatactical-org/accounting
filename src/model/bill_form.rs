@@ -47,10 +47,10 @@ impl BillForm {
 
     /// Validate the form into a create request, returning the rejection
     /// message and the untouched form when validation fails.
-    pub fn into_create(self) -> Result<CreateBill, (String, Self)> {
+    pub fn into_create(self) -> Result<CreateBill, Box<(String, Self)>> {
         let (kind, status, bill_date, due_date, line_items) = match self.parse() {
             Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
+            Err(message) => return Err(Box::new((message, self))),
         };
         Ok(CreateBill {
             kind,
@@ -69,10 +69,10 @@ impl BillForm {
 
     /// Validate the form into an update request, returning the rejection
     /// message and the untouched form when validation fails.
-    pub fn into_update(self) -> Result<UpdateBill, (String, Self)> {
+    pub fn into_update(self) -> Result<UpdateBill, Box<(String, Self)>> {
         let (kind, status, bill_date, due_date, line_items) = match self.parse() {
             Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
+            Err(message) => return Err(Box::new((message, self))),
         };
         Ok(UpdateBill {
             kind,

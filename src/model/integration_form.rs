@@ -21,10 +21,10 @@ impl IntegrationForm {
 
     /// Validate the form into a create request, returning the rejection
     /// message and the untouched form when validation fails.
-    pub fn into_create(self) -> Result<CreateIntegration, (String, Self)> {
+    pub fn into_create(self) -> Result<CreateIntegration, Box<(String, Self)>> {
         let provider = match self.parse() {
             Ok(provider) => provider,
-            Err(message) => return Err((message, self)),
+            Err(message) => return Err(Box::new((message, self))),
         };
         Ok(CreateIntegration {
             name: self.name,
@@ -38,10 +38,10 @@ impl IntegrationForm {
 
     /// Validate the form into an update request, returning the rejection
     /// message and the untouched form when validation fails.
-    pub fn into_update(self) -> Result<UpdateIntegration, (String, Self)> {
+    pub fn into_update(self) -> Result<UpdateIntegration, Box<(String, Self)>> {
         let provider = match self.parse() {
             Ok(provider) => provider,
-            Err(message) => return Err((message, self)),
+            Err(message) => return Err(Box::new((message, self))),
         };
         Ok(UpdateIntegration {
             name: self.name,

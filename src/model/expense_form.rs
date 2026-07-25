@@ -34,10 +34,10 @@ impl ExpenseForm {
 
     /// Validate the form into a create request, returning the rejection
     /// message and the untouched form when validation fails.
-    pub fn into_create(self) -> Result<CreateExpense, (String, Self)> {
+    pub fn into_create(self) -> Result<CreateExpense, Box<(String, Self)>> {
         let (category, expense_date, amount_cents) = match self.parse() {
             Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
+            Err(message) => return Err(Box::new((message, self))),
         };
         Ok(CreateExpense {
             expense_date,
@@ -55,10 +55,10 @@ impl ExpenseForm {
 
     /// Validate the form into an update request, returning the rejection
     /// message and the untouched form when validation fails.
-    pub fn into_update(self) -> Result<UpdateExpense, (String, Self)> {
+    pub fn into_update(self) -> Result<UpdateExpense, Box<(String, Self)>> {
         let (category, expense_date, amount_cents) = match self.parse() {
             Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
+            Err(message) => return Err(Box::new((message, self))),
         };
         Ok(UpdateExpense {
             expense_date,
