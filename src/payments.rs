@@ -44,12 +44,12 @@ async fn fetch_charges(base: &str) -> Result<Vec<ChargeSummary>, PaymentsError> 
 
 /// Map of charge id → order id, from the orders service.
 ///
-/// Charges reference the cart, not the order — the order does not exist yet
-/// when the deposit is charged — so the charge → order link only exists on
-/// the order rows. Best-effort: an unconfigured or unreachable orders
-/// service yields an empty map and reconciled receipts simply carry no order
-/// link, which a later reconcile cannot repair but which never blocks
-/// recording the money itself.
+/// The charge log this reconciles against does not expose the payment
+/// reference, so the charge → order link is read from the order rows, which
+/// record the charge that paid their deposit. Best-effort: an unconfigured or
+/// unreachable orders service yields an empty map and reconciled receipts
+/// simply carry no order link, which a later reconcile cannot repair but which
+/// never blocks recording the money itself.
 async fn order_ids_by_charge() -> HashMap<String, String> {
     match crate::orders::fetch_order_refs().await {
         Ok(orders) => orders

@@ -138,14 +138,12 @@ fn bill_form_routes(
             html_page(templates::render_bill_form_html(&catalog_skus, None, None))
         },
         create: |store: SharedStore, form: BillForm| async move {
-            match form.into_create() {
-                Ok(input) => match create_bill(&store, input).await {
+            match form.validate() {
+                Ok(parsed) => match create_bill(&store, form.into_create(parsed)).await {
                     Ok(()) => Ok(redirect_to_index()),
                     Err(e) => Ok(bill_form_error(None, None, &e.to_string()).await),
                 },
-                Err((message, form)) => {
-                    Ok(bill_form_error(None, Some(form.into()), &message).await)
-                }
+                Err(message) => Ok(bill_form_error(None, Some(form.into()), &message).await),
             }
         },
         edit_page: |store: SharedStore, id: String| async move {
@@ -158,15 +156,15 @@ fn bill_form_routes(
             ))
         },
         update: |store: SharedStore, id: String, form: BillForm| async move {
-            match form.into_update() {
-                Ok(input) => match update_bill(&store, &id, input).await {
+            match form.validate() {
+                Ok(parsed) => match update_bill(&store, &id, form.into_update(parsed)).await {
                     Ok(()) => Ok(redirect_to_index()),
                     Err(e) => {
                         let bill = store.get_bill(&id).await.ok().flatten();
                         Ok(bill_form_error(bill, None, &e.to_string()).await)
                     }
                 },
-                Err((message, form)) => {
+                Err(message) => {
                     let bill = store.get_bill(&id).await.ok().flatten();
                     Ok(bill_form_error(bill, Some(form.into()), &message).await)
                 }
@@ -186,12 +184,12 @@ fn expense_form_routes(
         segment: "expenses",
         new_page: || async { html_page(templates::render_expense_form_html(None, None)) },
         create: |store: SharedStore, form: ExpenseForm| async move {
-            match form.into_create() {
-                Ok(input) => match create_expense(&store, input).await {
+            match form.validate() {
+                Ok(parsed) => match create_expense(&store, form.into_create(parsed)).await {
                     Ok(()) => Ok(redirect_to_index()),
                     Err(e) => Ok(expense_form_error(None, None, &e.to_string())),
                 },
-                Err((message, form)) => Ok(expense_form_error(None, Some(form.into()), &message)),
+                Err(message) => Ok(expense_form_error(None, Some(form.into()), &message)),
             }
         },
         edit_page: |store: SharedStore, id: String| async move {
@@ -199,15 +197,15 @@ fn expense_form_routes(
             html_page(templates::render_expense_form_html(Some(expense), None))
         },
         update: |store: SharedStore, id: String, form: ExpenseForm| async move {
-            match form.into_update() {
-                Ok(input) => match update_expense(&store, &id, input).await {
+            match form.validate() {
+                Ok(parsed) => match update_expense(&store, &id, form.into_update(parsed)).await {
                     Ok(()) => Ok(redirect_to_index()),
                     Err(e) => {
                         let expense = store.get_expense(&id).await.ok().flatten();
                         Ok(expense_form_error(expense, None, &e.to_string()))
                     }
                 },
-                Err((message, form)) => {
+                Err(message) => {
                     let expense = store.get_expense(&id).await.ok().flatten();
                     Ok(expense_form_error(expense, Some(form.into()), &message))
                 }
@@ -227,14 +225,12 @@ fn integration_form_routes(
         segment: "integrations",
         new_page: || async { html_page(templates::render_integration_form_html(None, None)) },
         create: |store: SharedStore, form: IntegrationForm| async move {
-            match form.into_create() {
-                Ok(input) => match store.create_integration(input).await {
+            match form.validate() {
+                Ok(provider) => match store.create_integration(form.into_create(provider)).await {
                     Ok(_) => Ok(redirect_to_index()),
                     Err(e) => Ok(integration_form_error(None, None, &e.to_string())),
                 },
-                Err((message, form)) => {
-                    Ok(integration_form_error(None, Some(form.into()), &message))
-                }
+                Err(message) => Ok(integration_form_error(None, Some(form.into()), &message)),
             }
         },
         edit_page: |store: SharedStore, id: String| async move {
@@ -245,15 +241,20 @@ fn integration_form_routes(
             ))
         },
         update: |store: SharedStore, id: String, form: IntegrationForm| async move {
-            match form.into_update() {
-                Ok(input) => match store.update_integration(&id, input).await {
-                    Ok(_) => Ok(redirect_to_index()),
-                    Err(e) => {
-                        let integration = store.get_integration(&id).await.ok().flatten();
-                        Ok(integration_form_error(integration, None, &e.to_string()))
+            match form.validate() {
+                Ok(provider) => {
+                    match store
+                        .update_integration(&id, form.into_update(provider))
+                        .await
+                    {
+                        Ok(_) => Ok(redirect_to_index()),
+                        Err(e) => {
+                            let integration = store.get_integration(&id).await.ok().flatten();
+                            Ok(integration_form_error(integration, None, &e.to_string()))
+                        }
                     }
-                },
-                Err((message, form)) => {
+                }
+                Err(message) => {
                     let integration = store.get_integration(&id).await.ok().flatten();
                     Ok(integration_form_error(
                         integration,

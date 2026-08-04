@@ -14,7 +14,7 @@ mod templates;
 mod web;
 
 use std::convert::Infallible;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use warp::Filter;
 use warp::Reply;
@@ -28,12 +28,6 @@ pub use model::{
 /// Shared accounting store handle (`PgPool` is internally concurrent).
 pub type SharedStore = Arc<store::AccountingStore>;
 
-fn with_store(
-    store: SharedStore,
-) -> impl Filter<Extract = (SharedStore,), Error = Infallible> + Clone {
-    warp::any().map(move || store.clone())
-}
-
 /// Site routes: web UI, JSON API, `/up`, health, theme static assets, and
 /// themed error recovery, with the shared security headers applied.
 pub fn routes(
@@ -42,18 +36,13 @@ pub fn routes(
     let health_pool = Arc::new(store.pool().clone());
     let store = Arc::new(store);
 
-    let index = web::routes(with_store(store.clone()));
+    let index = web::routes(sigma_theme::warp::with_state(store.clone()));
     let extra = sigma_pg::health::warp::health_routes("accounting", Some(health_pool))
-        .or(api::routes(with_store(store)));
-
-    // `security_headers` borrows the extra `connect-src` origin for as long
-    // as the returned filter lives, so resolve it once per process.
-    static IDENTITY_ORIGIN: OnceLock<String> = OnceLock::new();
-    let identity_origin = IDENTITY_ORIGIN.get_or_init(config::identity_public_origin);
+        .or(api::routes(sigma_theme::warp::with_state(store)));
 
     sigma_theme::warp::security_headers(
         sigma_theme::warp::site_routes(index, extra),
-        identity_origin,
+        config::identity_public_origin(),
     )
 }
 

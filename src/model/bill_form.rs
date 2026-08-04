@@ -11,7 +11,7 @@ use super::{
 
 /// The fallible parts of the form, parsed before any field is moved out so a
 /// rejected submission can hand the raw form back for re-display.
-type ParsedBill = (
+pub type ParsedBill = (
     BillKind,
     BillStatus,
     NaiveDate,
@@ -35,7 +35,9 @@ pub struct BillForm {
     pub notes: String,
 }
 impl BillForm {
-    fn parse(&self) -> Result<ParsedBill, String> {
+    /// Parse the fallible fields, borrowing the form so a rejected submission
+    /// can still be handed back for re-display.
+    pub fn validate(&self) -> Result<ParsedBill, String> {
         Ok((
             self.kind.parse()?,
             self.status.parse()?,
@@ -45,14 +47,13 @@ impl BillForm {
         ))
     }
 
-    /// Validate the form into a create request, returning the rejection
-    /// message and the untouched form when validation fails.
-    pub fn into_create(self) -> Result<CreateBill, (String, Self)> {
-        let (kind, status, bill_date, due_date, line_items) = match self.parse() {
-            Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
-        };
-        Ok(CreateBill {
+    /// Build a create request from the form and its [`validate`] output.
+    ///
+    /// [`validate`]: Self::validate
+    #[must_use]
+    pub fn into_create(self, parsed: ParsedBill) -> CreateBill {
+        let (kind, status, bill_date, due_date, line_items) = parsed;
+        CreateBill {
             kind,
             status: Some(status),
             vendor: self.vendor,
@@ -64,17 +65,16 @@ impl BillForm {
             line_items,
             scan_uri: empty_to_none(self.scan_uri),
             notes: empty_to_none(self.notes),
-        })
+        }
     }
 
-    /// Validate the form into an update request, returning the rejection
-    /// message and the untouched form when validation fails.
-    pub fn into_update(self) -> Result<UpdateBill, (String, Self)> {
-        let (kind, status, bill_date, due_date, line_items) = match self.parse() {
-            Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
-        };
-        Ok(UpdateBill {
+    /// Build an update request from the form and its [`validate`] output.
+    ///
+    /// [`validate`]: Self::validate
+    #[must_use]
+    pub fn into_update(self, parsed: ParsedBill) -> UpdateBill {
+        let (kind, status, bill_date, due_date, line_items) = parsed;
+        UpdateBill {
             kind,
             status,
             vendor: self.vendor,
@@ -86,6 +86,6 @@ impl BillForm {
             line_items,
             scan_uri: empty_to_none(self.scan_uri),
             notes: empty_to_none(self.notes),
-        })
+        }
     }
 }

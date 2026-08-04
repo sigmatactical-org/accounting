@@ -8,7 +8,7 @@ use super::{CreateExpense, ExpenseCategory, UpdateExpense, normalize_currency, p
 
 /// The fallible parts of the form, parsed before any field is moved out so a
 /// rejected submission can hand the raw form back for re-display.
-type ParsedExpense = (ExpenseCategory, NaiveDate, i64);
+pub type ParsedExpense = (ExpenseCategory, NaiveDate, i64);
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExpenseForm {
@@ -24,7 +24,9 @@ pub struct ExpenseForm {
     pub notes: String,
 }
 impl ExpenseForm {
-    fn parse(&self) -> Result<ParsedExpense, String> {
+    /// Parse the fallible fields, borrowing the form so a rejected submission
+    /// can still be handed back for re-display.
+    pub fn validate(&self) -> Result<ParsedExpense, String> {
         Ok((
             self.category.parse()?,
             parse_date(&self.expense_date, "expense date")?,
@@ -32,14 +34,13 @@ impl ExpenseForm {
         ))
     }
 
-    /// Validate the form into a create request, returning the rejection
-    /// message and the untouched form when validation fails.
-    pub fn into_create(self) -> Result<CreateExpense, (String, Self)> {
-        let (category, expense_date, amount_cents) = match self.parse() {
-            Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
-        };
-        Ok(CreateExpense {
+    /// Build a create request from the form and its [`validate`] output.
+    ///
+    /// [`validate`]: Self::validate
+    #[must_use]
+    pub fn into_create(self, parsed: ParsedExpense) -> CreateExpense {
+        let (category, expense_date, amount_cents) = parsed;
+        CreateExpense {
             expense_date,
             category,
             description: self.description,
@@ -50,17 +51,16 @@ impl ExpenseForm {
             bill_id: empty_to_none(self.bill_id),
             order_id: empty_to_none(self.order_id),
             notes: empty_to_none(self.notes),
-        })
+        }
     }
 
-    /// Validate the form into an update request, returning the rejection
-    /// message and the untouched form when validation fails.
-    pub fn into_update(self) -> Result<UpdateExpense, (String, Self)> {
-        let (category, expense_date, amount_cents) = match self.parse() {
-            Ok(parsed) => parsed,
-            Err(message) => return Err((message, self)),
-        };
-        Ok(UpdateExpense {
+    /// Build an update request from the form and its [`validate`] output.
+    ///
+    /// [`validate`]: Self::validate
+    #[must_use]
+    pub fn into_update(self, parsed: ParsedExpense) -> UpdateExpense {
+        let (category, expense_date, amount_cents) = parsed;
+        UpdateExpense {
             expense_date,
             category,
             description: self.description,
@@ -71,7 +71,7 @@ impl ExpenseForm {
             bill_id: empty_to_none(self.bill_id),
             order_id: empty_to_none(self.order_id),
             notes: empty_to_none(self.notes),
-        })
+        }
     }
 }
 
