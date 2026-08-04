@@ -19,21 +19,22 @@ pub struct AccountingStore {
 
 impl AccountingStore {
     pub async fn connect() -> Result<Self, StoreError> {
-        let pool = sigma_pg::connect_as("accounting").await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool: sigma_pg::PgStore::connect("accounting").await?.into_inner(),
+        })
     }
 
     #[cfg(test)]
     pub async fn connect_empty() -> Result<Self, StoreError> {
-        let store = Self::connect().await?;
-        sigma_pg::assert_disposable_test_db(&store.pool).await;
-        sqlx::query(
-            "TRUNCATE accounting.receipts, accounting.expenses, accounting.bill_line_items, \
-             accounting.bills, accounting.integrations",
-        )
-        .execute(&store.pool)
-        .await?;
-        Ok(store)
+        Ok(Self {
+            pool: sigma_pg::PgStore::connect_empty(
+                "accounting",
+                "TRUNCATE accounting.receipts, accounting.expenses, accounting.bill_line_items, \
+                 accounting.bills, accounting.integrations",
+            )
+            .await?
+            .into_inner(),
+        })
     }
 
     #[must_use]
@@ -41,14 +42,17 @@ impl AccountingStore {
         &self.pool
     }
 
+    /// The newest bills, capped at [`sigma_pg::list::LIST_LIMIT`] rows.
     pub async fn list_bills(&self) -> Result<Vec<Bill>, StoreError> {
         let rows = sqlx::query(
             "SELECT id, kind, status, vendor, invoice_number, order_id, bill_date, due_date, \
              currency, total_cents, scan_uri, notes, updated_at \
-             FROM accounting.bills ORDER BY bill_date DESC",
+             FROM accounting.bills ORDER BY bill_date DESC LIMIT $1",
         )
+        .bind(sigma_pg::list::LIST_LIMIT)
         .fetch_all(&self.pool)
         .await?;
+        sigma_pg::list::warn_if_at_limit("bills", rows.len());
         self.rows_to_bills(rows).await
     }
 
@@ -126,14 +130,17 @@ impl AccountingStore {
         .await
     }
 
+    /// The newest expenses, capped at [`sigma_pg::list::LIST_LIMIT`] rows.
     pub async fn list_expenses(&self) -> Result<Vec<Expense>, StoreError> {
         let rows = sqlx::query(
             "SELECT id, expense_date, category, description, vendor, amount_cents, currency, \
              receipt_uri, bill_id, order_id, notes, updated_at \
-             FROM accounting.expenses ORDER BY expense_date DESC, id",
+             FROM accounting.expenses ORDER BY expense_date DESC, id LIMIT $1",
         )
+        .bind(sigma_pg::list::LIST_LIMIT)
         .fetch_all(&self.pool)
         .await?;
+        sigma_pg::list::warn_if_at_limit("expenses", rows.len());
         rows.into_iter().map(row_to_expense).collect()
     }
 
@@ -227,13 +234,16 @@ impl AccountingStore {
         .await
     }
 
+    /// The newest receipts, capped at [`sigma_pg::list::LIST_LIMIT`] rows.
     pub async fn list_receipts(&self) -> Result<Vec<Receipt>, StoreError> {
         let rows = sqlx::query(
             "SELECT id, charge_id, order_id, user_id, kind, amount_cents, currency, occurred_at, \
-             notes, updated_at FROM accounting.receipts ORDER BY occurred_at DESC, id",
+             notes, updated_at FROM accounting.receipts ORDER BY occurred_at DESC, id LIMIT $1",
         )
+        .bind(sigma_pg::list::LIST_LIMIT)
         .fetch_all(&self.pool)
         .await?;
+        sigma_pg::list::warn_if_at_limit("receipts", rows.len());
         rows.into_iter().map(row_to_receipt).collect()
     }
 
