@@ -15,11 +15,51 @@ use warp::{Filter, Rejection, Reply};
 
 use crate::SharedStore;
 use crate::catalog::{self, CatalogSku};
+use crate::config;
 use crate::model::{
     Bill, BillForm, CreateBill, CreateExpense, Expense, ExpenseForm, Integration, IntegrationForm,
     UpdateBill, UpdateExpense,
 };
+use crate::session_status;
 use crate::templates::{self, BillFormValues, ExpenseFormValues, IntegrationFormValues};
+
+/// Outcome of the admin session gate for HTML admin routes.
+pub(super) enum AdminGate {
+    Allow,
+    SignIn(Response),
+    /// Signed in but not an admin — hide the admin surface.
+    Deny,
+}
+
+/// Require an admin identity session. Anonymous users are sent to sign-in;
+/// signed-in non-admins get a 404 so the accounting UI stays private.
+pub(super) async fn require_admin(cookie: Option<&str>, return_path: &str) -> AdminGate {
+    match session_status::fetch_identity_status(cookie).await {
+        Some(status) if status.is_admin => AdminGate::Allow,
+        Some(_) => AdminGate::Deny,
+        None => AdminGate::SignIn(sign_in_redirect(return_path)),
+    }
+}
+
+fn sign_in_redirect(return_path: &str) -> Response {
+    let links = sigma_identity_nav::auth_links(
+        &config::identity_public_base_url(),
+        &config::public_base_url(),
+        return_path,
+    );
+    match links.sign_in_url.parse::<warp::http::Uri>() {
+        Ok(uri) => warp::redirect::see_other(uri).into_response(),
+        Err(_) => warp::reply::with_status(
+            warp::reply::html(sigma_theme::errors::internal_server_error_html()),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        )
+        .into_response(),
+    }
+}
+
+pub(super) fn cookie_filter() -> impl Filter<Extract = (Option<String>,), Error = Rejection> + Clone {
+    warp::header::optional::<String>("cookie")
+}
 
 /// Catalog SKUs plus a banner when the catalog service is unreachable.
 type CatalogSkus = (Arc<Vec<CatalogSku>>, Option<String>);
@@ -56,8 +96,14 @@ fn reconcile_receipts_form(
 ) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
     warp::path!("receipts" / "reconcile")
         .and(warp::post())
+        .and(cookie_filter())
         .and(store)
-        .and_then(|store: SharedStore| async move {
+        .and_then(|cookie: Option<String>, store: SharedStore| async move {
+            match require_admin(cookie.as_deref(), "/").await {
+                AdminGate::Allow => {}
+                AdminGate::SignIn(resp) => return Ok(resp),
+                AdminGate::Deny => return Err(warp::reject::not_found()),
+            }
             let message = match crate::payments::reconcile_receipts(&store).await {
                 Ok(outcome) => format!(
                     "Reconcile: {} successful charge(s) seen, {} new receipt(s) recorded, \
@@ -75,8 +121,14 @@ fn delete_receipt_form(
 ) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
     warp::path!("receipts" / String / "delete")
         .and(warp::post())
+        .and(cookie_filter())
         .and(store)
-        .and_then(|id: String, store: SharedStore| async move {
+        .and_then(|id: String, cookie: Option<String>, store: SharedStore| async move {
+            match require_admin(cookie.as_deref(), "/").await {
+                AdminGate::Allow => {}
+                AdminGate::SignIn(resp) => return Ok(resp),
+                AdminGate::Deny => return Err(warp::reject::not_found()),
+            }
             match store.delete_receipt(&id).await {
                 Ok(()) => Ok(redirect_to_index()),
                 Err(e) if e.is_not_found() => Err(warp::reject::not_found()),
@@ -105,8 +157,16 @@ fn index_page(
 ) -> impl Filter<Extract = (Response,), Error = Rejection> + Clone + Send + 'static {
     warp::path::end()
         .and(warp::get())
+        .and(cookie_filter())
         .and(store)
-        .and_then(|store: SharedStore| async move { render_index(&store, None).await })
+        .and_then(|cookie: Option<String>, store: SharedStore| async move {
+            match require_admin(cookie.as_deref(), "/").await {
+                AdminGate::Allow => {}
+                AdminGate::SignIn(resp) => return Ok(resp),
+                AdminGate::Deny => return Err(warp::reject::not_found()),
+            }
+            render_index(&store, None).await
+        })
 }
 
 /// Render the index, optionally with a status message (delete-failure

@@ -9,6 +9,8 @@ use warp::{Filter, Rejection};
 
 use crate::SharedStore;
 
+use super::{AdminGate, cookie_filter, require_admin};
+
 /// The five HTML-form routes every accounting entity has:
 /// `GET /{segment}/new`, `POST /{segment}`, `GET /{segment}/{id}/edit`,
 /// `POST /{segment}/{id}/edit`, and `POST /{segment}/{id}/delete`.
@@ -57,23 +59,49 @@ where
             delete,
         } = self;
 
+        let new_return_path = format!("/{segment}/new");
+
         let new_page_route = warp::path(segment)
             .and(warp::path("new"))
             .and(warp::path::end())
             .and(warp::get())
-            .and_then(move || {
-                let new_page = new_page.clone();
-                async move { new_page().await }
+            .and(cookie_filter())
+            .and_then({
+                let new_return_path = new_return_path.clone();
+                move |cookie: Option<String>| {
+                    let new_page = new_page.clone();
+                    let new_return_path = new_return_path.clone();
+                    async move {
+                        match require_admin(cookie.as_deref(), &new_return_path).await {
+                            AdminGate::Allow => {}
+                            AdminGate::SignIn(resp) => return Ok(resp),
+                            AdminGate::Deny => return Err(warp::reject::not_found()),
+                        }
+                        new_page().await
+                    }
+                }
             });
 
         let create_route = warp::path(segment)
             .and(warp::path::end())
             .and(warp::post())
+            .and(cookie_filter())
             .and(warp::body::form::<Form>())
             .and(store.clone())
-            .and_then(move |form: Form, store: SharedStore| {
-                let create = create.clone();
-                async move { create(store, form).await }
+            .and_then({
+                let new_return_path = new_return_path.clone();
+                move |cookie: Option<String>, form: Form, store: SharedStore| {
+                    let create = create.clone();
+                    let new_return_path = new_return_path.clone();
+                    async move {
+                        match require_admin(cookie.as_deref(), &new_return_path).await {
+                            AdminGate::Allow => {}
+                            AdminGate::SignIn(resp) => return Ok(resp),
+                            AdminGate::Deny => return Err(warp::reject::not_found()),
+                        }
+                        create(store, form).await
+                    }
+                }
             });
 
         let edit_page_route = warp::path(segment)
@@ -81,10 +109,19 @@ where
             .and(warp::path("edit"))
             .and(warp::path::end())
             .and(warp::get())
+            .and(cookie_filter())
             .and(store.clone())
-            .and_then(move |id: String, store: SharedStore| {
+            .and_then(move |id: String, cookie: Option<String>, store: SharedStore| {
                 let edit_page = edit_page.clone();
-                async move { edit_page(store, id).await }
+                async move {
+                    let return_path = format!("/{segment}/{id}/edit");
+                    match require_admin(cookie.as_deref(), &return_path).await {
+                        AdminGate::Allow => {}
+                        AdminGate::SignIn(resp) => return Ok(resp),
+                        AdminGate::Deny => return Err(warp::reject::not_found()),
+                    }
+                    edit_page(store, id).await
+                }
             });
 
         let update_route = warp::path(segment)
@@ -92,11 +129,20 @@ where
             .and(warp::path("edit"))
             .and(warp::path::end())
             .and(warp::post())
+            .and(cookie_filter())
             .and(warp::body::form::<Form>())
             .and(store.clone())
-            .and_then(move |id: String, form: Form, store: SharedStore| {
+            .and_then(move |id: String, cookie: Option<String>, form: Form, store: SharedStore| {
                 let update = update.clone();
-                async move { update(store, id, form).await }
+                async move {
+                    let return_path = format!("/{segment}/{id}/edit");
+                    match require_admin(cookie.as_deref(), &return_path).await {
+                        AdminGate::Allow => {}
+                        AdminGate::SignIn(resp) => return Ok(resp),
+                        AdminGate::Deny => return Err(warp::reject::not_found()),
+                    }
+                    update(store, id, form).await
+                }
             });
 
         let delete_route = warp::path(segment)
@@ -104,10 +150,18 @@ where
             .and(warp::path("delete"))
             .and(warp::path::end())
             .and(warp::post())
+            .and(cookie_filter())
             .and(store)
-            .and_then(move |id: String, store: SharedStore| {
+            .and_then(move |id: String, cookie: Option<String>, store: SharedStore| {
                 let delete = delete.clone();
-                async move { delete(store, id).await }
+                async move {
+                    match require_admin(cookie.as_deref(), "/").await {
+                        AdminGate::Allow => {}
+                        AdminGate::SignIn(resp) => return Ok(resp),
+                        AdminGate::Deny => return Err(warp::reject::not_found()),
+                    }
+                    delete(store, id).await
+                }
             });
 
         new_page_route
